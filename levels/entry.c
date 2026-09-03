@@ -13,6 +13,7 @@ const LevelScript level_script_entry[] = {
     BLACKOUT( FALSE),
     SET_REG( 0),
 
-    EXECUTE( 0x14,  _introSegmentRomStart,  _introSegmentRomEnd,  level_intro_mario_head_regular),
+    // EXECUTE( 0x14,  _introSegmentRomStart,  _introSegmentRomEnd,  level_intro_mario_head_regular),
+    EXECUTE(0x14, _introSegmentRomStart, _introSegmentRomEnd, level_intro_splash_screen),
     JUMP( level_script_entry),
 };

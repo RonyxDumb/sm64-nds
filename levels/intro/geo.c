@@ -54,9 +54,9 @@ const GeoLayout intro_geo_mario_head_regular[] = {
 #if defined(VERSION_SH) || defined(VERSION_CN)
                 GEO_ASM(0, geo_intro_face_easter_egg),
 #endif
-#ifdef TARGET_NDS
-                GEO_ASM(0, geo_nds_intro_menu),
-#endif
+// #ifdef TARGET_NDS
+                // GEO_ASM(0, geo_nds_intro_menu),
+// #endif
             GEO_CLOSE_NODE(),
         GEO_CLOSE_NODE(),
         GEO_ZBUFFER(1),

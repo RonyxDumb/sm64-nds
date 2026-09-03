@@ -9,7 +9,6 @@ static u16 high_freqs;
 
 static u8 chan_seq[16];
 static u16 chan_inited;
-
 static u16 calculate_freq(f32 frequency) {
 
     u32 freq = frequency * 32000;
@@ -20,9 +19,16 @@ static u16 calculate_freq(f32 frequency) {
 static u32 calculate_vol_pan(const struct Note *note) {
 
     u32 vol = note->targetVolLeft + note->targetVolRight;
-    u32 pan = (vol << 13) / note->targetVolLeft;
+    u32 pan;
+
+    if (note->targetVolLeft == 0) {
+        pan = (note->targetVolRight != 0) ? 127 : 64;
+    } else {
+        pan = (vol << 13) / note->targetVolLeft;
+        pan >>= 8;
+    }
+
     vol >>= 8;
-    pan >>= 8;
     if (vol > 127) vol = 127;
     if (pan > 127) pan = 127;
     return SOUND_VOL(vol) | SOUND_PAN(pan);
@@ -34,6 +40,18 @@ void play_notes(struct Note *notes) {
 
     for (int i = 0; i < 16; i++) {
         struct Note *note = &notes[i];
+
+        /*
+         * Spegne SOLO la Note classificata come mutabile dall'ARM9.
+         * Azzerare chan_inited obbliga il resume a ricreare correttamente
+         * il sample, evitando che SOUND_REPEAT resti bloccato.
+         */
+        if (note->ndsMuted) {
+            SCHANNEL_CR(i) &= ~SCHANNEL_ENABLE;
+            chan_inited &= ~BIT(i);
+            high_freqs &= ~BIT(i);
+            continue;
+        }
 
         if (note->enabled && note->ndsSourceFull != 0) {
             const bool wantHalf = (note->frequency >= 2.0f) && (note->ndsSourceHalf != 0);

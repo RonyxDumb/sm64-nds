@@ -20,12 +20,8 @@ where docker 1>nul 2>nul || (
 
 if not exist baserom.%REGION%.z64 (
   echo A Super Mario 64 ROM is required to extract the assets and build the game.
-  echo Put your own dump in this folder, renamed for the region you want:
-  echo  - baserom.us.z64 for the USA version - recommended
-  echo  - baserom.eu.z64 for the European version
-  echo  - baserom.jp.z64 for the Japanese version
-  echo  - baserom.sh.z64 for the Japanese rumble pak / Shindou edition
-  echo Selected region: %REGION%
+  echo Put your own dump in this folder, renamed:
+  echo  - baserom.us.z64 for the USA version - only working
   pause
   exit /b 1
 )

@@ -1,4 +1,3 @@
-
 include util.mk
 
 default: all
@@ -104,6 +103,18 @@ ifeq ($(NON_MATCHING),1)
   COMPARE := 0
 endif
 
+# Nintendo DS debug console.
+# Default (0) = release build: startup/debug console hidden.
+# Set NDS_DEBUG_CONSOLE=1 only for diagnostic builds.
+NDS_DEBUG_CONSOLE ?= 0
+
+ifeq ($(TARGET_NDS),1)
+  $(eval $(call validate-option,NDS_DEBUG_CONSOLE,0 1))
+  ifeq ($(NDS_DEBUG_CONSOLE),1)
+    DEFINES += NDS_DEBUG_CONSOLE=1
+  endif
+endif
+
 COMPARE ?= 1
 $(eval $(call validate-option,COMPARE,0 1))
 
@@ -133,6 +144,13 @@ ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
     $(info Build Matching: no)
   else
     $(info Build Matching: yes)
+  endif
+  ifeq ($(TARGET_NDS),1)
+    ifeq ($(NDS_DEBUG_CONSOLE),1)
+      $(info NDS Console:     debug)
+    else
+      $(info NDS Console:     release (hidden))
+    endif
   endif
   $(info =======================)
 endif
@@ -204,6 +222,15 @@ ifeq ($(TARGET_NDS),1)
   SRC_DIRS += src/nds
   ARM7_SRC_DIRS := src/nds/arm7
   GFX_DIRS := src/nds/gfx
+
+  # Nintendo DS ROM banner/icon.
+  # icon.png stays in src/nds/gfx, but is excluded from the ARM9 texture pipeline.
+  NDS_ICON_SRC := src/nds/gfx/icon.png
+  NDS_ICON     := src/nds/gfx/icon.bmp
+
+  NDS_TITLE     := Super Mario 64
+  NDS_SUBTITLE1 := Nintendo DS Port
+  NDS_SUBTITLE2 := by Francesco Pio Pipino
 else
   SRC_DIRS += asm
   ULTRA_SRC_DIRS += lib/asm
@@ -240,7 +267,8 @@ ifeq ($(TARGET_NDS),1)
   ARM7_C_FILES := $(foreach dir,$(ARM7_SRC_DIRS),$(wildcard $(dir)/*.c))
   ARM7_O_FILES := $(foreach file,$(ARM7_C_FILES),$(BUILD_DIR)/arm7/$(file:.c=.o))
 
-  PNG_FILES := $(foreach dir,$(GFX_DIRS),$(wildcard $(dir)/*.png))
+  # icon.png is the ROM banner icon, not an ARM9 touchpad texture.
+  PNG_FILES := $(filter-out $(NDS_ICON_SRC),$(foreach dir,$(GFX_DIRS),$(wildcard $(dir)/*.png)))
   GFX_O_FILES := $(foreach file,$(PNG_FILES),$(BUILD_DIR)/gfx/$(file:.png=.o))
 endif
 
@@ -999,9 +1027,13 @@ NDS_NITROFS_FILES := \
 	$(NITROFS_DIR)/sound/sound_data.tbl \
 	$(NITROFS_DIR)/sound/sequences.bin
 
-$(ROM): $(ARM7) $(ARM9) $(NDS_NITROFS_FILES) $(NDS_NITROFS_DATA)
+$(ROM): $(ARM7) $(ARM9) $(NDS_NITROFS_FILES) $(NDS_NITROFS_DATA) $(NDS_ICON)
 	@$(PRINT) "$(GREEN)Building ROM: $(BLUE)$@ $(NO_COL)\n"
-	$(V)$(NDSTOOL) -c $@ -9 $(ARM9) -7 $(ARM7) -d $(NITROFS_DIR)
+	$(V)$(NDSTOOL) -c $@ \
+		-9 $(ARM9) \
+		-7 $(ARM7) \
+		-b $(NDS_ICON) "$(NDS_TITLE);$(NDS_SUBTITLE1);$(NDS_SUBTITLE2)" \
+		-d $(NITROFS_DIR)
 	$(V)dd if=/dev/zero of=$@ bs=1 seek=18 count=1 conv=notrunc 2>/dev/null
 	$(V)$(NDSTOOL) -f $@
 else

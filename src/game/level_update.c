@@ -35,6 +35,9 @@ extern void nds_debug_printf(const char *fmt, ...);
 #include "course_table.h"
 #include "rumble_init.h"
 
+// Variabile per evitare che il suono nel castello venga mutato
+static u8 sPauseAudioMode = 1;
+
 #define PLAY_MODE_NORMAL 0
 #define PLAY_MODE_PAUSED 2
 #define PLAY_MODE_CHANGE_AREA 3
@@ -973,7 +976,17 @@ s32 play_mode_normal(void) {
         } else if (sTransitionTimer != 0) {
             set_play_mode(PLAY_MODE_CHANGE_AREA);
         } else if (pressed_pause()) {
-            lower_background_noise(1);
+            /*
+             * Nel castello interno manteniamo la BGM in riproduzione
+             * e ne abbassiamo soltanto il volume.
+             *
+             * Negli altri livelli usiamo il normale mute della pausa.
+             *
+             * Modalita' 1: mute normale
+             * Modalita' 2: SEQ_PLAYER_LEVEL al 40% con fade
+             */
+            sPauseAudioMode = (gCurrLevelNum == LEVEL_CASTLE) ? 2 : 1;
+            lower_background_noise(sPauseAudioMode);
 #if ENABLE_RUMBLE
             cancel_rumble();
 #endif
@@ -988,11 +1001,29 @@ s32 play_mode_normal(void) {
 s32 play_mode_paused(void) {
     if (gMenuOptSelectIndex == MENU_OPT_NONE) {
         set_menu_mode(MENU_MODE_RENDER_PAUSE_SCREEN);
+
     } else if (gMenuOptSelectIndex == MENU_OPT_DEFAULT) {
-        raise_background_noise(1);
+        /*
+         * Ripristina l'audio quando si chiude normalmente
+         * il menu pausa.
+         */
+        raise_background_noise(sPauseAudioMode);
+
         gCameraMovementFlags &= ~CAM_MOVE_PAUSE_SCREEN;
         set_play_mode(PLAY_MODE_NORMAL);
+
     } else {
+        /*
+         * EXIT COURSE
+         *
+         * La pausa ha chiamato lower_background_noise().
+         * Prima di effettuare il warp dobbiamo SEMPRE
+         * ripristinare l'audio, altrimenti sul backend NDS
+         * lo stato di mute rimane attivo anche nel livello
+         * successivo.
+         */
+        raise_background_noise(sPauseAudioMode);
+
         if (gDebugLevelSelect) {
             fade_into_special_warp(-9, 1);
         } else {
@@ -1013,7 +1044,7 @@ s32 play_mode_frame_advance(void) {
         play_mode_normal();
     } else if (gPlayer1Controller->buttonPressed & START_BUTTON) {
         gCameraMovementFlags &= ~CAM_MOVE_PAUSE_SCREEN;
-        raise_background_noise(1);
+        raise_background_noise(sPauseAudioMode);
         set_play_mode(PLAY_MODE_NORMAL);
     } else {
         gCameraMovementFlags |= CAM_MOVE_PAUSE_SCREEN;
@@ -1115,6 +1146,12 @@ s32 init_level(void) {
     DBG("init_level warpType=%d\n", sWarpDest.type);
 
     set_play_mode(PLAY_MODE_NORMAL);
+
+    /*
+     * Valore sicuro di default. Viene ricalcolato quando
+     * il giocatore entra effettivamente in pausa.
+     */
+    sPauseAudioMode = 1;
 
     sDelayedWarpOp = WARP_OP_NONE;
     sTransitionTimer = 0;

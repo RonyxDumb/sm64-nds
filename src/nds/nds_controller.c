@@ -6,7 +6,7 @@
 #include "lib/src/osContInternal.h"
 #include "nds_net.h"
 #include "nds_netplay.h"
-#include "nds_menu.h"
+// #include "nds_menu.h"
 
 #define STICK_RADIUS 28
 
@@ -31,17 +31,7 @@ void osContGetReadData(OSContPad *pad) {
     sprites[C_RIGHT].pressed = false;
 
     scanKeys();
-    const u32 down = keysDown();
     const u32 keys = keysHeld();
-
-    if (down & KEY_SELECT) {
-        gNdsMenuOpen = !gNdsMenuOpen;
-    }
-
-    if (gNdsMenuOpen) {
-        nds_menu_feed_keys(down & ~KEY_SELECT);
-        return;
-    }
 
     if (keys & KEY_A) pad->button |= A_BUTTON;
     if (keys & KEY_B) pad->button |= B_BUTTON;

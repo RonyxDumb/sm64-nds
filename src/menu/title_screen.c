@@ -29,49 +29,6 @@ static u16 sDemoCountdown = 0;
 #ifndef VERSION_JP
 static s16 sPlayMarioGreeting = TRUE;
 static s16 sPlayMarioGameOver = TRUE;
-
-#ifdef TARGET_NDS
-
-#include "game/ingame_menu.h"
-#include "game/segment2.h"
-#include "menu/intro_geo.h"
-#include "text_strings.h"
-
-extern volatile unsigned char gNdsNetState;
-extern volatile unsigned char gNdsNetIsHost;
-extern volatile unsigned char gNdsNetRequest;
-
-static u8 sNdsMpChoice;
-static u8 sNdsMpConfirmed;
-static u8 sNdsStickNeutral = 1;
-
-static u8 textNdsSingle[]  = { TEXT_NDS_SINGLE_PLAYER };
-static u8 textNdsMulti[]   = { TEXT_NDS_MULTIPLAYER };
-static u8 textNdsHint[]    = { TEXT_NDS_START_HINT };
-static u8 textNdsSearch2[] = { TEXT_NDS_SEARCHING };
-static u8 textNdsHost2[]   = { TEXT_NDS_MP_HOST };
-static u8 textNdsGuest2[]  = { TEXT_NDS_MP_GUEST };
-
-static void nds_intro_render_menu(void) {
-
-    print_text_centered(160, 120, sNdsMpChoice == 0 ? "+ SINGLE PLAYER +" : "SINGLE PLAYER");
-    print_text_centered(160,  95, sNdsMpChoice == 1 ? "+ MULTIPLAYER +"   : "MULTIPLAYER");
-
-    if (sNdsMpConfirmed && sNdsMpChoice == 1) {
-        if (gNdsNetState != 2) {
-            print_text_centered(160, 62, "SEARCHING");
-        } else {
-            print_text_centered(160, 62, gNdsNetIsHost ? "HOST  PRESS A" : "GUEST  PRESS A");
-        }
-    } else {
-        print_text_centered(160, 62, "PRESS A TO START");
-    }
-}
-
-Gfx *geo_nds_intro_menu(UNUSED s32 callContext, UNUSED struct GraphNode *node, UNUSED void *context) {
-    return NULL;
-}
-#endif
 #endif
 
 #define PRESS_START_DEMO_TIMER 800
@@ -162,7 +119,6 @@ s32 intro_regular(void) {
     s32 level = LEVEL_NONE;
 
 #ifndef VERSION_JP
-
     if (sPlayMarioGreeting == TRUE) {
         if (gGlobalTimer < 129) {
             play_sound(SOUND_MARIO_HELLO, gGlobalSoundSource);
@@ -170,48 +126,9 @@ s32 intro_regular(void) {
             play_sound(SOUND_MARIO_PRESS_START_TO_PLAY, gGlobalSoundSource);
         }
         sPlayMarioGreeting = FALSE;
-#ifdef TARGET_NDS
-        sNdsMpChoice = 0;
-        sNdsMpConfirmed = 0;
-#endif
     }
 #endif
 
-#ifdef TARGET_NDS
-    {
-        u16 pressed = gPlayer1Controller->buttonPressed;
-        s16 sy = gPlayer1Controller->stickY;
-
-        sDemoCountdown = 0;
-
-        if (!sNdsMpConfirmed) {
-
-            if (sy > 30 || sy < -30) {
-                if (sNdsStickNeutral) {
-                    sNdsMpChoice ^= 1;
-                    play_sound(SOUND_MENU_CHANGE_SELECT, gGlobalSoundSource);
-                    sNdsStickNeutral = 0;
-                }
-            } else {
-                sNdsStickNeutral = 1;
-            }
-            if (pressed & (A_BUTTON | START_BUTTON)) {
-                sNdsMpConfirmed = 1;
-                play_sound(SOUND_MENU_STAR_SOUND, gGlobalSoundSource);
-                if (sNdsMpChoice == 1) {
-                    gNdsNetRequest = 1;
-                }
-            }
-        } else {
-
-            if (sNdsMpChoice == 0 || (pressed & (A_BUTTON | START_BUTTON))) {
-                level = 100 + gDebugLevelSelect;
-                sPlayMarioGreeting = TRUE;
-            }
-        }
-        nds_intro_render_menu();
-    }
-#else
     print_intro_text();
 
     if (gPlayer1Controller->buttonPressed & START_BUTTON) {
@@ -226,7 +143,7 @@ s32 intro_regular(void) {
         sPlayMarioGreeting = TRUE;
 #endif
     }
-#endif
+
     return run_level_id_or_demo(level);
 }
 

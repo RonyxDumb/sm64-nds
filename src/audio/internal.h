@@ -676,6 +676,19 @@ struct Note {
      u8 ndsLoop;
      u8 ndsSeq;
 
+     /*
+      * Classificazione del sample per la pausa NDS.
+      *
+      * Il backend DS riproduce i sample direttamente sugli SCHANNEL ARM7.
+      * Se il sequencer stacca parentLayer durante il mute, l'ARM7 non puo'
+      * piu' capire a quale SequencePlayer apparteneva il sample. Conserviamo
+      * quindi questa informazione mentre il parent e' ancora valido.
+      */
+     u8 ndsPauseMute;
+     u8 ndsMuteSeq;
+     u8 ndsMuteKnown;
+     u8 ndsMuted;
+
 #endif
 };
 #endif

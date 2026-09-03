@@ -40,7 +40,7 @@ const LevelScript level_intro_splash_screen[] = {
     SLEEP( 2),
 
     SET_REG( 16),
-    EXIT_AND_EXECUTE( 0x14, _menuSegmentRomStart, _menuSegmentRomEnd, level_main_menu_entry_1),
+    EXIT_AND_EXECUTE( 0x14, _menuSegmentRomStart, _menuSegmentRomEnd, /*level_main_menu_entry_1*/level_intro_mario_head_regular),
 };
 
 const LevelScript level_intro_mario_head_regular[] = {
@@ -64,8 +64,10 @@ const LevelScript level_intro_mario_head_regular[] = {
     SLEEP( 20),
     CALL_LOOP( LVL_INTRO_REGULAR,  lvl_intro_update),
 
-    JUMP_IF( OP_EQ,  100, script_intro_to_splash),
-    JUMP_IF( OP_EQ,  101, script_intro_L2),
+    // JUMP_IF( OP_EQ,  100, script_intro_to_splash),
+    // JUMP_IF( OP_EQ,  101, script_intro_L2),
+    JUMP_IF(OP_EQ, 100, script_intro_L1),
+    JUMP_IF(OP_EQ, 101, script_intro_L2),
     JUMP(script_intro_L4),
 };
 

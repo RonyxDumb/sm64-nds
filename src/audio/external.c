@@ -15,6 +15,7 @@
 
 #ifdef TARGET_NDS
 extern u8 gNdsAudioDisabled;
+extern void nds_audio_set_hardware_muted(u8 muted);
 #define NDS_AUDIO_GUARD() do { if (gNdsAudioDisabled) return; } while (0)
 #else
 #define NDS_AUDIO_GUARD()
@@ -1866,6 +1867,9 @@ NDS_ITCM_CODE static u8 begin_background_music_fade(u16 fadeDuration) {
 
 void set_audio_muted(u8 muted) {
     NDS_AUDIO_GUARD();
+#ifdef TARGET_NDS
+    nds_audio_set_hardware_muted(muted);
+#endif
     u8 i;
 
     for (i = 0; i < SEQUENCE_PLAYERS; i++) {
