@@ -224,13 +224,17 @@ ifeq ($(TARGET_NDS),1)
   GFX_DIRS := src/nds/gfx
 
   # Nintendo DS ROM banner/icon.
-  # icon.png stays in src/nds/gfx, but is excluded from the ARM9 texture pipeline.
-  NDS_ICON_SRC := src/nds/gfx/icon.png
+  # NDS_ICON_SRC := src/nds/gfx/icon.png
   NDS_ICON     := src/nds/gfx/icon.bmp
 
   NDS_TITLE     := Super Mario 64
   NDS_SUBTITLE1 := Nintendo DS Port
   NDS_SUBTITLE2 := by Francesco Pio Pipino
+
+  NDS_GAME_CODE  := \#\#\#\#
+  NDS_MAKER_CODE   := FP
+  NDS_ROM_TITLE    := PIPINOSM64
+  NDS_ROM_VERSION  := 0
 else
   SRC_DIRS += asm
   ULTRA_SRC_DIRS += lib/asm
@@ -1030,10 +1034,11 @@ NDS_NITROFS_FILES := \
 $(ROM): $(ARM7) $(ARM9) $(NDS_NITROFS_FILES) $(NDS_NITROFS_DATA) $(NDS_ICON)
 	@$(PRINT) "$(GREEN)Building ROM: $(BLUE)$@ $(NO_COL)\n"
 	$(V)$(NDSTOOL) -c $@ \
-		-9 $(ARM9) \
-		-7 $(ARM7) \
-		-b $(NDS_ICON) "$(NDS_TITLE);$(NDS_SUBTITLE1);$(NDS_SUBTITLE2)" \
-		-d $(NITROFS_DIR)
+	-9 $(ARM9) \
+	-7 $(ARM7) \
+	-g "$(NDS_GAME_CODE)" "$(NDS_MAKER_CODE)" "$(NDS_ROM_TITLE)" $(NDS_ROM_VERSION) \
+	-b $(NDS_ICON) "$(NDS_TITLE);$(NDS_SUBTITLE1);$(NDS_SUBTITLE2)" \
+	-d $(NITROFS_DIR)
 	$(V)dd if=/dev/zero of=$@ bs=1 seek=18 count=1 conv=notrunc 2>/dev/null
 	$(V)$(NDSTOOL) -f $@
 else
