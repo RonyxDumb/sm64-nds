@@ -17,7 +17,7 @@
 #define SC_ENTRY_NONE     0xFFFF
 #define SC_NODE_NONE      0xFFFF
 
-#define SC_MISS_RING      32
+#define SC_MISS_RING      64
 #define SC_QUARANTINE_LEN 24
 #define SC_QUARANTINE_TICKS 4
 
@@ -28,10 +28,10 @@
 #define SC_HEAP_RESERVE   0x4000
 
 #define SC_EAGER_BUDGET   0x40000
-#define SC_FRAME_BUDGET   0x6000
+#define SC_FRAME_BUDGET   0x4000
 #define SC_PREFETCH_RESERVE_SHIFT 3
 
-enum { SC_ABSENT = 0, SC_RESIDENT = 1, SC_FAILED = 2 };
+enum { SC_ABSENT = 0, SC_LOADING = 1, SC_RESIDENT = 2, SC_FAILED = 3 };
 
 #define SC_F_IN_MISS_RING 0x01
 #define SC_F_IN_PREFETCH  0x02
@@ -115,6 +115,7 @@ static u32 sLoadDone;
 static u8 sStage[NDS_COPY_MAX_CHUNK] __attribute__((aligned(32)));
 
 static FILE *sTblFile;
+static long sTblPosition = -1;
 static u8 sReady;
 
 #define SC_IS_REMOTE(a) ((u32) (a) >= 0x03000000)
@@ -160,6 +161,10 @@ void nds_debug_printf(const char *fmt, ...);
 
 static u16 node_take(void) {
     u16 n = sFreeNodePool;
+
+    if (n == SC_NODE_NONE) {
+        return SC_NODE_NONE;
+    }
     sFreeNodePool = sFreeNodes[n].next;
     return n;
 }
@@ -194,6 +199,11 @@ static void free_block(u8 *addr, u32 size) {
     }
     {
         u16 n = node_take();
+        if (n == SC_NODE_NONE) {
+            /* Metadata pool exhausted: keep the allocator consistent. */
+            sFreeBytes -= size;
+            return;
+        }
         sFreeNodes[n].addr = addr;
         sFreeNodes[n].size = size;
         sFreeNodes[n].next = cur;
@@ -269,7 +279,7 @@ static int entry_in_use(u16 idx) {
     if (gNotes == NULL) {
         return 0;
     }
-    for (i = 0; i < 20; i++) {
+    for (i = 0; i < gMaxSimultaneousNotes; i++) {
         if (gNotes[i].enabled && gNotes[i].ndsEntry == idx) {
             return 1;
         }
@@ -278,45 +288,35 @@ static int entry_in_use(u16 idx) {
 }
 
 static int evict_one(void) {
-    int attempt;
-    for (attempt = 0; attempt < 8; attempt++) {
-        u16 best = SC_ENTRY_NONE;
-        u32 bestAge = 0;
-        u16 i;
-        for (i = 0; i < sEntryCount; i++) {
-            struct ScEntry *e = &sEntries[i];
-            if (e->state == SC_RESIDENT) {
-                u32 age = gNdsAudioTick - e->lastUsed;
-                if (best == SC_ENTRY_NONE || age > bestAge) {
-                    best = i;
-                    bestAge = age;
-                }
-            }
-        }
-        if (best == SC_ENTRY_NONE) {
-            return 0;
-        }
-        {
-            struct ScEntry *e = &sEntries[best];
-            u8 *addr = e->addr;
+    u16 best = SC_ENTRY_NONE;
+    u32 bestAge = 0;
+    u16 i;
 
-            e->state = SC_ABSENT;
-            if (entry_in_use(best)) {
-
-                e->state = SC_RESIDENT;
-                e->lastUsed = gNdsAudioTick;
-                continue;
+    /* One LRU pass. Entries currently used by a Note are never candidates. */
+    for (i = 0; i < sEntryCount; i++) {
+        struct ScEntry *e = &sEntries[i];
+        if (e->state == SC_RESIDENT && !entry_in_use(i)) {
+            u32 age = gNdsAudioTick - e->lastUsed;
+            if (best == SC_ENTRY_NONE || age > bestAge) {
+                best = i;
+                bestAge = age;
             }
-            if (!quarantine_push(addr, e->size)) {
-
-                e->state = SC_RESIDENT;
-                return 0;
-            }
-            e->addr = NULL;
-            return 1;
         }
     }
-    return 0;
+    if (best == SC_ENTRY_NONE) {
+        return 0;
+    }
+    {
+        struct ScEntry *e = &sEntries[best];
+        u8 *addr = e->addr;
+        if (addr == NULL || !quarantine_push(addr, e->size)) {
+            return 0;
+        }
+        e->addr = NULL;
+        e->halfOff = 0;
+        e->state = SC_ABSENT;
+        return 1;
+    }
 }
 
 static u8 *reserve_space(u32 size, int allowEvict) {
@@ -337,10 +337,36 @@ static u8 *reserve_space(u32 size, int allowEvict) {
     }
 }
 
-static int load_piece(struct ScEntry *e, u8 *dstBase, u32 pieceOff, u32 len) {
-    if (fseek(sTblFile, e->fileOff + pieceOff, SEEK_SET) != 0) {
+static int tbl_read_at(u32 offset, void *dst, u32 len) {
+    if (sTblFile == NULL || dst == NULL || len == 0) {
         return 0;
     }
+
+    if (sTblPosition != (long) offset) {
+        if (fseek(sTblFile, (long) offset, SEEK_SET) != 0) {
+            sTblPosition = -1;
+            return 0;
+        }
+        sTblPosition = (long) offset;
+    }
+
+    if (fread(dst, 1, len, sTblFile) != len) {
+        sTblPosition = -1;
+        return 0;
+    }
+    sTblPosition += (long) len;
+    return 1;
+}
+
+static int load_piece(struct ScEntry *e, u8 *dstBase, u32 pieceOff, u32 len) {
+    u32 filePos;
+
+    if (e == NULL || dstBase == NULL || len == 0 || pieceOff > e->size
+        || len > e->size - pieceOff) {
+        return 0;
+    }
+    filePos = e->fileOff + pieceOff;
+
     if (SC_IS_REMOTE(dstBase)) {
         u32 done = 0;
         while (done < len) {
@@ -348,7 +374,7 @@ static int load_piece(struct ScEntry *e, u8 *dstBase, u32 pieceOff, u32 len) {
             if (n > NDS_COPY_MAX_CHUNK) {
                 n = NDS_COPY_MAX_CHUNK;
             }
-            if (fread(sStage, 1, n, sTblFile) != n) {
+            if (!tbl_read_at(filePos + done, sStage, n)) {
                 return 0;
             }
             if (pieceOff + done == 0) {
@@ -360,7 +386,7 @@ static int load_piece(struct ScEntry *e, u8 *dstBase, u32 pieceOff, u32 len) {
             done += n;
         }
     } else {
-        if (fread(dstBase + pieceOff, 1, len, sTblFile) != len) {
+        if (!tbl_read_at(filePos, dstBase + pieceOff, len)) {
             return 0;
         }
         if (pieceOff == 0) {
@@ -372,12 +398,18 @@ static int load_piece(struct ScEntry *e, u8 *dstBase, u32 pieceOff, u32 len) {
 }
 
 static int load_entry_sync(u16 idx, int allowEvict) {
-    struct ScEntry *e = &sEntries[idx];
+    struct ScEntry *e;
     u8 *addr;
+
+    if (idx >= sEntryCount) {
+        return 0;
+    }
+    e = &sEntries[idx];
     if (e->state == SC_RESIDENT) {
         return 1;
     }
-    if (e->state == SC_FAILED || sTblFile == NULL || sLoadEntry == idx) {
+    if (e->state == SC_FAILED || e->state == SC_LOADING || sTblFile == NULL
+        || sLoadEntry == idx) {
         return 0;
     }
     addr = reserve_space(e->size, allowEvict);
@@ -399,10 +431,17 @@ static int load_entry_sync(u16 idx, int allowEvict) {
 static u32 load_pump(u32 budget) {
     struct ScEntry *e;
     u32 want;
-    if (sLoadEntry == SC_ENTRY_NONE || budget == 0) {
+    if (sLoadEntry == SC_ENTRY_NONE || sLoadEntry >= sEntryCount || budget == 0) {
         return 0;
     }
     e = &sEntries[sLoadEntry];
+    if (e->state != SC_LOADING || e->addr == NULL || sLoadDone >= e->size) {
+        e->state = SC_FAILED;
+        e->addr = NULL;
+        sLoadEntry = SC_ENTRY_NONE;
+        sLoadDone = 0;
+        return 0;
+    }
     want = e->size - sLoadDone;
     if (want > budget) {
         want = budget;
@@ -425,8 +464,13 @@ static u32 load_pump(u32 budget) {
 }
 
 static int load_begin(u16 idx, int allowEvict) {
-    struct ScEntry *e = &sEntries[idx];
+    struct ScEntry *e;
     u8 *addr;
+
+    if (idx >= sEntryCount) {
+        return 0;
+    }
+    e = &sEntries[idx];
     if (e->state != SC_ABSENT || sLoadEntry != SC_ENTRY_NONE) {
         return 0;
     }
@@ -435,6 +479,7 @@ static int load_begin(u16 idx, int allowEvict) {
         return 0;
     }
     e->addr = addr;
+    e->state = SC_LOADING;
     sLoadEntry = idx;
     sLoadDone = 0;
     return 1;
@@ -451,9 +496,16 @@ static s32 blob_index(u32 blobOff) {
 }
 
 static u32 entry_lookup(s32 blobIdx, u32 fileOff) {
-    u16 lo = sBlobEntryStart[blobIdx];
-    u16 hi = lo + sBlobEntryCount[blobIdx];
-    u16 end = hi;
+    u16 lo;
+    u16 hi;
+    u16 end;
+
+    if (blobIdx < 0 || blobIdx >= sBlobCount) {
+        return SC_ENTRY_NONE;
+    }
+    lo = sBlobEntryStart[blobIdx];
+    hi = lo + sBlobEntryCount[blobIdx];
+    end = hi;
     while (lo < hi) {
         u16 mid = (lo + hi) / 2;
         if (sEntries[mid].fileOff < fileOff) {
@@ -478,6 +530,49 @@ u32 nds_scache_entry_for(s32 bankId, u32 blobRelOffset) {
         return SC_ENTRY_NONE;
     }
     return entry_lookup(blobIdx, sBankBlobOff[bankId] + blobRelOffset);
+}
+
+static int queue_miss(u16 idx) {
+    u8 head;
+    u8 next;
+    struct ScEntry *e;
+
+    if (idx >= sEntryCount) {
+        return 0;
+    }
+    e = &sEntries[idx];
+    if (e->state != SC_ABSENT || (e->flags & SC_F_IN_MISS_RING)) {
+        return e->state != SC_ABSENT;
+    }
+
+    head = sMissHead;
+    next = (u8) ((head + 1) % SC_MISS_RING);
+    if (next == sMissTail) {
+        return 0;
+    }
+    e->flags |= SC_F_IN_MISS_RING;
+    sMissRing[head] = idx;
+    sMissHead = next;
+    return 1;
+}
+
+static int queue_prefetch(u16 idx) {
+    struct ScEntry *e;
+
+    if (idx >= sEntryCount) {
+        return 0;
+    }
+    e = &sEntries[idx];
+    if (e->state != SC_ABSENT || (e->flags & SC_F_IN_PREFETCH)) {
+        return e->state != SC_ABSENT;
+    }
+    if ((u16) (sPrefetchTail - sPrefetchHead) >= SC_MAX_ENTRIES) {
+        return 0;
+    }
+    e->flags |= SC_F_IN_PREFETCH;
+    sPrefetchQueue[sPrefetchTail % SC_MAX_ENTRIES] = idx;
+    sPrefetchTail++;
+    return 1;
 }
 
 void nds_scache_note_resolve(struct Note *note) {
@@ -506,14 +601,8 @@ void nds_scache_note_resolve(struct Note *note) {
 
         note->ndsEntry = idx;
         gNdsCntResolveMiss++;
-        if (e->state == SC_ABSENT && !(e->flags & SC_F_IN_MISS_RING)) {
-            u8 head = sMissHead;
-            u8 next = (head + 1) % SC_MISS_RING;
-            if (next != sMissTail) {
-                e->flags |= SC_F_IN_MISS_RING;
-                sMissRing[head] = idx;
-                sMissHead = next;
-            }
+        if (e->state == SC_ABSENT) {
+            queue_miss((u16) idx);
         }
         return;
     }
@@ -545,13 +634,18 @@ void nds_scache_retry_pending(void) {
     if (!sReady || gNotes == NULL) {
         return;
     }
-    for (i = 0; i < 16; i++) {
+    for (i = 0; i < gMaxSimultaneousNotes; i++) {
         struct Note *note = &gNotes[i];
-        if (note->enabled && note->ndsSourceFull == 0 && note->ndsEntry < sEntryCount
-            && sEntries[note->ndsEntry].state == SC_RESIDENT) {
-            nds_scache_note_resolve(note);
-            if (note->ndsSourceFull != 0) {
-                note->ndsSeq++;
+        if (note->enabled && note->ndsSourceFull == 0 && note->ndsEntry < sEntryCount) {
+            struct ScEntry *e = &sEntries[note->ndsEntry];
+            if (e->state == SC_RESIDENT) {
+                nds_scache_note_resolve(note);
+                if (note->ndsSourceFull != 0) {
+                    note->ndsSeq++;
+                }
+            } else if (e->state == SC_ABSENT) {
+                /* Recover automatically if the miss ring was previously full. */
+                queue_miss(note->ndsEntry);
             }
         }
     }
@@ -572,11 +666,16 @@ void nds_scache_bank_loaded(s32 bankId) {
         }
         for (i = 0; i < count; i++) {
             u16 idx = sBankRefs[start + i];
+            if (idx == SC_ENTRY_NONE || idx >= sEntryCount) {
+                continue;
+            }
             struct ScEntry *e = &sEntries[idx];
             if (e->state == SC_RESIDENT) {
                 e->lastUsed = gNdsAudioTick;
             } else if (e->size <= budget && load_entry_sync(idx, 1)) {
                 budget -= e->size;
+            } else if (e->state == SC_ABSENT) {
+                queue_prefetch(idx);
             }
 
         }
@@ -584,13 +683,10 @@ void nds_scache_bank_loaded(s32 bankId) {
 
         for (i = 0; i < count; i++) {
             u16 idx = sBankRefs[start + i];
-            struct ScEntry *e = &sEntries[idx];
-            if (e->state == SC_ABSENT && !(e->flags & SC_F_IN_PREFETCH)
-                && (u16) (sPrefetchTail - sPrefetchHead) < SC_MAX_ENTRIES) {
-                e->flags |= SC_F_IN_PREFETCH;
-                sPrefetchQueue[sPrefetchTail % SC_MAX_ENTRIES] = idx;
-                sPrefetchTail++;
+            if (idx == SC_ENTRY_NONE || idx >= sEntryCount) {
+                continue;
             }
+            queue_prefetch(idx);
         }
     }
 }
@@ -653,6 +749,25 @@ s32 nds_scache_init(void) {
     s32 b, k;
 
     sReady = 0;
+    gNdsScacheFail = 0;
+    sEntryCount = 0;
+    sBlobCount = 0;
+    sMissHead = 0;
+    sMissTail = 0;
+    sPrefetchHead = 0;
+    sPrefetchTail = 0;
+    sQuarHead = 0;
+    sQuarCount = 0;
+    sQuarBytes = 0;
+    sLoadEntry = SC_ENTRY_NONE;
+    sLoadDone = 0;
+    sTblPosition = -1;
+    sRemoteDead = 0;
+
+    memset(sEntries, 0, sizeof(sEntries));
+    memset(sBankRefs, 0xFF, sizeof(sBankRefs));
+    memset((void *) sMissRing, 0xFF, sizeof(sMissRing));
+    memset(sPrefetchQueue, 0xFF, sizeof(sPrefetchQueue));
     if (gSoundDataADSR == NULL || gSoundDataRaw == NULL) {
         gNdsScacheFail = 1;
         return -1;
@@ -666,7 +781,6 @@ s32 nds_scache_init(void) {
     }
     sBankCount = bankCount;
 
-    sBlobCount = 0;
     for (b = 0; b < sBankCount; b++) {
         u32 off = RD32(gSoundDataRaw + 4 + b * 8);
         u32 len = RD32(gSoundDataRaw + 4 + b * 8 + 4);
@@ -778,6 +892,10 @@ s32 nds_scache_init(void) {
         for (a = 0; a < n; a++) {
             struct ScEntry *e = &sEntries[sEntryCount + a];
             u32 next = (a + 1 < n) ? sInitOffsets[a + 1] : sBlobLen[k];
+            if (sInitOffsets[a] >= next || next > sBlobLen[k]) {
+                gNdsScacheFail = 5;
+                return -1;
+            }
             e->fileOff = sBlobOff[k] + sInitOffsets[a];
             e->size = next - sInitOffsets[a];
             e->addr = NULL;
@@ -803,6 +921,7 @@ s32 nds_scache_init(void) {
         gNdsScacheFail = 7;
         return -1;
     }
+    sTblPosition = 0;
     {
         u32 size;
         for (size = SC_ARENA_MAX; size >= SC_ARENA_MIN; size -= SC_ARENA_STEP) {
