@@ -33,6 +33,11 @@ extern u8 gGfxSPTaskStack[];
 
 extern struct SaveBuffer gSaveBuffer;
 
-extern struct GfxPool gGfxPools[2];
+#ifdef TARGET_NDS
+#define GFX_POOL_COUNT 1
+#else
+#define GFX_POOL_COUNT 2
+#endif
+extern struct GfxPool gGfxPools[GFX_POOL_COUNT];
 
 #endif

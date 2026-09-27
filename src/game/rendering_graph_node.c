@@ -630,6 +630,11 @@ static s32 obj_is_in_view(struct GraphNodeObject *node, Mat4 matrix) {
     s16 halfFov;
     struct GraphNode *geo;
     f32 hScreenEdge;
+#if defined(TARGET_NDS) && defined(ARM9)
+    static const struct GraphNodePerspective *cachedFrustum;
+    static f32 cachedFov;
+    static f32 cachedTanHalfFov;
+#endif
 
     if (node->node.flags & GRAPH_RENDER_INVISIBLE) {
         return FALSE;
@@ -637,9 +642,18 @@ static s32 obj_is_in_view(struct GraphNodeObject *node, Mat4 matrix) {
 
     geo = node->sharedChild;
 
+#if defined(TARGET_NDS) && defined(ARM9)
+    if (cachedFrustum != gCurGraphNodeCamFrustum || cachedFov != gCurGraphNodeCamFrustum->fov) {
+        halfFov = (gCurGraphNodeCamFrustum->fov / 2.0f + 1.0f) * 32768.0f / 180.0f + 0.5f;
+        cachedTanHalfFov = sins(halfFov) / coss(halfFov);
+        cachedFrustum = gCurGraphNodeCamFrustum;
+        cachedFov = gCurGraphNodeCamFrustum->fov;
+    }
+    hScreenEdge = -matrix[3][2] * cachedTanHalfFov;
+#else
     halfFov = (gCurGraphNodeCamFrustum->fov / 2.0f + 1.0f) * 32768.0f / 180.0f + 0.5f;
-
     hScreenEdge = -matrix[3][2] * sins(halfFov) / coss(halfFov);
+#endif
 
 #ifdef WIDESCREEN
 

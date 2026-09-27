@@ -332,7 +332,6 @@ void *load_segment(s32 segment, u8 *srcStart, u8 *srcEnd, u32 side) {
         return sNdsNullSegment;
     }
 
-    memset(dest, 0, alignedSize);
     bytesRead = fread(dest, 1, rawSize, f);
     fclose(f);
     if (bytesRead != rawSize) {
@@ -344,6 +343,10 @@ void *load_segment(s32 segment, u8 *srcStart, u8 *srcEnd, u32 side) {
             sSegment2DataSize = 0;
         }
         return sNdsNullSegment;
+    }
+    /* The file filled the prefix; preserve zero padding without clearing it twice. */
+    if (alignedSize > rawSize) {
+        memset((u8 *)dest + rawSize, 0, alignedSize - rawSize);
     }
 
     set_segment_base_addr(segment, dest);
@@ -404,7 +407,6 @@ void *load_segment_decompress_heap(u32 segment, u8 *srcStart, u8 *srcEnd) {
         return sNdsTexHeap;
     }
 
-    memset(sNdsTexHeap, 0, sizeof(sNdsTexHeap));
     bytesRead = fread(sNdsTexHeap, 1, size, f);
     fclose(f);
     if (bytesRead != size) {
@@ -415,6 +417,10 @@ void *load_segment_decompress_heap(u32 segment, u8 *srcStart, u8 *srcEnd) {
         renderer_invalidate_texture_cache();
 #endif
         return sNdsTexHeap;
+    }
+
+    if (size < sizeof(sNdsTexHeap)) {
+        memset(sNdsTexHeap + size, 0, sizeof(sNdsTexHeap) - size);
     }
 
     set_segment_base_addr(segment, sNdsTexHeap);

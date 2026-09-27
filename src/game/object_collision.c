@@ -29,9 +29,17 @@ s32 detect_object_hitbox_overlap(struct Object *a, struct Object *b) {
     UNUSED f32 sp30 = sp3C - sp38;
     f32 dz = a->oPosZ - b->oPosZ;
     f32 collisionRadius = a->hitboxRadius + b->hitboxRadius;
+#if defined(TARGET_NDS) && defined(ARM9)
+    f32 distanceSquared = dx * dx + dz * dz;
+#else
     f32 distance = sqrtf(dx * dx + dz * dz);
+#endif
 
+#if defined(TARGET_NDS) && defined(ARM9)
+    if (collisionRadius > 0.0f && distanceSquared < collisionRadius * collisionRadius) {
+#else
     if (collisionRadius > distance) {
+#endif
         f32 sp20 = a->hitboxHeight + sp3C;
         f32 sp1C = b->hitboxHeight + sp38;
 
@@ -68,13 +76,21 @@ s32 detect_object_hurtbox_overlap(struct Object *a, struct Object *b) {
     UNUSED f32 sp30 = sp3C - sp38;
     f32 sp2C = a->oPosZ - b->oPosZ;
     f32 sp28 = a->hurtboxRadius + b->hurtboxRadius;
+#if defined(TARGET_NDS) && defined(ARM9)
+    f32 distanceSquared = sp34 * sp34 + sp2C * sp2C;
+#else
     f32 sp24 = sqrtf(sp34 * sp34 + sp2C * sp2C);
+#endif
 
     if (a == gMarioObject) {
         b->oInteractionSubtype |= INT_SUBTYPE_DELAY_INVINCIBILITY;
     }
 
+#if defined(TARGET_NDS) && defined(ARM9)
+    if (sp28 > 0.0f && distanceSquared < sp28 * sp28) {
+#else
     if (sp28 > sp24) {
+#endif
         f32 sp20 = a->hitboxHeight + sp3C;
         f32 sp1C = b->hurtboxHeight + sp38;
 

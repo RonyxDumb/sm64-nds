@@ -102,8 +102,13 @@ DTCM_BSS static int32_t z_depth;
 DTCM_BSS static uint8_t fog_status;
 DTCM_BSS static uint16_t fog_min;
 DTCM_BSS static uint16_t fog_max;
+/* The fog table is hardware state and survives between rendered frames. */
+DTCM_BSS static bool fog_table_valid;
+DTCM_BSS static uint16_t fog_table_min;
+DTCM_BSS static uint16_t fog_table_max;
 
 DTCM_BSS static int no_texture;
+DTCM_BSS static int bound_texture;
 DTCM_BSS static int frame_count;
 
 DTCM_BSS static Vtx_t *vertex_batch[BATCH_SIZE];
@@ -124,6 +129,14 @@ struct {
 static uint8_t glTexCount;
 static void glTexSync();
 static bool renderer_initialized;
+
+/* Texture binding is persistent; display lists often repeat the same state. */
+static inline void bind_texture(int name) {
+    if (bound_texture != name) {
+        glBindTexture(GL_TEXTURE_2D, name);
+        bound_texture = name;
+    }
+}
 
 static int glTexImage2DAsync(int target, int empty1, GL_TEXTURE_TYPE_ENUM type, int sizeX, int sizeY, int empty2, int param, const void *texture) {
     if (!glGlob->activeTexture)
@@ -233,6 +246,7 @@ void renderer_invalidate_texture_cache(void) {
 
     texture_fifo_start = 0;
     texture_fifo_end = 0;
+    bound_texture = -1;
 }
 
 static void load_texture() {
@@ -246,13 +260,15 @@ static void load_texture() {
 
     if (cur->address != NULL) {
         if (cur->name) {
-            glBindTexture(GL_TEXTURE_2D, cur->name);
+            bind_texture(cur->name);
             return;
         }
 
         glGenTextures(1, &cur->name);
-        glBindTexture(GL_TEXTURE_2D, cur->name);
+        bind_texture(cur->name);
         while (!glTexImage2DAsync(GL_TEXTURE_2D, 0, cur->type, cur->size_x, cur->size_y, 0, TEXGEN_TEXCOORD, cur->address)) {
+            if (bound_texture == texture_map[texture_fifo[texture_fifo_end]].name)
+                bound_texture = -1;
             glDeleteTextures(1, &texture_map[texture_fifo[texture_fifo_end]].name);
             texture_map[texture_fifo[texture_fifo_end]].name = 0;
             texture_fifo_end = (texture_fifo_end + 1) & 0x7FF;
@@ -270,7 +286,7 @@ static void load_texture() {
 
         default:
 
-            glBindTexture(GL_TEXTURE_2D, cur->name = no_texture);
+            bind_texture(cur->name = no_texture);
             return;
     }
 
@@ -280,8 +296,10 @@ static void load_texture() {
     for (cur->size_y = 0; (height - 1) >> (cur->size_y + 3) != 0; cur->size_y++);
 
     glGenTextures(1, &cur->name);
-    glBindTexture(GL_TEXTURE_2D, cur->name);
+    bind_texture(cur->name);
     while (!glTexImage2DAsync(GL_TEXTURE_2D, 0, cur->type, cur->size_x, cur->size_y, 0, TEXGEN_TEXCOORD, cur->address)) {
+        if (bound_texture == texture_map[texture_fifo[texture_fifo_end]].name)
+            bound_texture = -1;
         glDeleteTextures(1, &texture_map[texture_fifo[texture_fifo_end]].name);
         texture_map[texture_fifo[texture_fifo_end]].name = 0;
         texture_fifo_end = (texture_fifo_end + 1) & 0x7FF;
@@ -316,7 +334,7 @@ ITCM_CODE static void draw_vertices(const Vtx_t **v, int count) {
     }
 
     if (!use_texture) {
-        glBindTexture(GL_TEXTURE_2D, no_texture);
+        bind_texture(no_texture);
         texture_dirty = true;
     } else if (texture_dirty) {
         load_texture();
@@ -469,7 +487,8 @@ ITCM_CODE static void g_vtx(Gwords *words) {
             int m[12];
             glGetFixed(GL_GET_MATRIX_VECTOR, m);
 
-            for (int i = 0; i < num_lights; i++) {
+            /* Lights 0 and 1 serve only automatic texture coordinates. */
+            for (int i = (geometry_mode & G_TEXTURE_GEN) ? 0 : 2; i < num_lights; i++) {
 
                 lights[i].nx = (lights[i].x * m[0] + lights[i].y * m[1] + lights[i].z * m[2]) >> 7;
                 lights[i].ny = (lights[i].x * m[3] + lights[i].y * m[4] + lights[i].z * m[5]) >> 7;
@@ -547,7 +566,11 @@ static void g_popmtx(Gwords *words) {
 
 static void g_geometrymode(Gwords *words) {
 
+    const uint32_t previous_mode = geometry_mode;
     geometry_mode = (geometry_mode & words->w0) | words->w1;
+    if (!(previous_mode & G_TEXTURE_GEN) && (geometry_mode & G_TEXTURE_GEN)) {
+        lights_dirty = true;
+    }
 
     poly_fmt |= POLY_CULL_NONE;
     if (geometry_mode & (1 << 9)) {
@@ -561,10 +584,11 @@ static void g_geometrymode(Gwords *words) {
 ITCM_CODE static void g_mtx(Gwords *words) {
 
     m4x4 matrix;
+    const uint32_t *data = (const uint32_t *)segmented_to_virtual((const void *)words->w1);
     for (int i = 0; i < 16; i += 2) {
-        const uint32_t *data = &((uint32_t*)segmented_to_virtual((const void*)words->w1))[i / 2];
-        matrix.m[i + 0] = (int32_t)((data[0] & 0xFFFF0000) | (data[8] >> 16));
-        matrix.m[i + 1] = (int32_t)((data[0] << 16) | (data[8] & 0x0000FFFF));
+        const int j = i / 2;
+        matrix.m[i + 0] = (int32_t)((data[j] & 0xFFFF0000) | (data[j + 8] >> 16));
+        matrix.m[i + 1] = (int32_t)((data[j] << 16) | (data[j + 8] & 0x0000FFFF));
     }
 
     const uint8_t params = words->w0 ^ G_MTX_PUSH;
@@ -859,7 +883,7 @@ static void g_fillrect(Gwords *words) {
     glPushMatrix();
     glLoadIdentity();
 
-    glBindTexture(GL_TEXTURE_2D, no_texture);
+    bind_texture(no_texture);
     texture_dirty = true;
 
     glPolyFmt(POLY_CULL_NONE | POLY_ALPHA(alpha));
@@ -1170,7 +1194,8 @@ void renderer_init() {
     vramSetBankE(VRAM_E_TEX_PALETTE);
 
     glGenTextures(1, &no_texture);
-    glBindTexture(GL_TEXTURE_2D, no_texture);
+    bound_texture = -1;
+    bind_texture(no_texture);
     glTexImage2DAsync(GL_TEXTURE_2D, 0, GL_NOTEXTURE, 0, 0, 0, TEXGEN_TEXCOORD, NULL);
     renderer_initialized = true;
 
@@ -1250,23 +1275,29 @@ void draw_frame(Gfx *display_list) {
     execute(display_list);
     glFlush(GL_TRANS_MANUALSORT);
 
-    if (fog_status) {
+    if (fog_status && fog_max > fog_min) {
 
-        int shift = 0;
-        for (int i = 500; i >= fog_max - fog_min; i >>= 1)
-            shift++;
+        if (!fog_table_valid || fog_table_min != fog_min || fog_table_max != fog_max) {
+            int shift = 0;
+            for (int i = 500; i >= fog_max - fog_min; i >>= 1)
+                shift++;
 
-        int density = 0;
-        int inc = ((((128 * 1000) << 1) / ((fog_max - fog_min) * 32)) + 1) >> (shift + 1);
+            int density = 0;
+            int inc = ((((128 * 1000) << 1) / ((fog_max - fog_min) * 32)) + 1) >> (shift + 1);
 
-        for (int i = 0; i < 32; i++) {
-            glFogDensity(i, density);
-            if ((density += inc) > 127)
-                density = 127;
+            for (int i = 0; i < 32; i++) {
+                glFogDensity(i, density);
+                if ((density += inc) > 127)
+                    density = 127;
+            }
+
+            glFogShift(shift);
+            glFogOffset((fog_min * 0x7FFF / 1000) - (0x400 >> shift));
+            fog_table_min = fog_min;
+            fog_table_max = fog_max;
+            fog_table_valid = true;
         }
 
-        glFogShift(shift);
-        glFogOffset((fog_min * 0x7FFF / 1000) - (0x400 >> shift));
         glFogColor(fog_color.r >> 3, fog_color.g >> 3, fog_color.b >> 3, fog_color.a >> 3);
         glEnable(GL_FOG);
     } else {

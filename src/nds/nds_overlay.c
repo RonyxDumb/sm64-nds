@@ -79,17 +79,19 @@ s32 nds_load_level_overlay(s32 levelId) {
     size = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    if (size > NDS_OVERLAY_SIZE) {
+    if (size < 0 || size > NDS_OVERLAY_SIZE) {
         fclose(f);
         return 0;
     }
 
-    memset(NDS_OVERLAY_BASE, 0, NDS_OVERLAY_SIZE);
     bytesRead = fread(NDS_OVERLAY_BASE, 1, (size_t) size, f);
     fclose(f);
     if (bytesRead != (size_t) size) {
         return 0;
     }
+
+    /* The file replaces the prefix; only the unused tail must be cleared. */
+    memset((u8 *)NDS_OVERLAY_BASE + size, 0, NDS_OVERLAY_SIZE - (size_t)size);
 
     sCurrentOverlayLevel = levelId;
     return 1;
