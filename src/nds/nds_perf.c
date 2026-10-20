@@ -83,12 +83,12 @@ static void dump(void) {
     FILE *f = fopen("fat:/sm64-perf.csv", "w");
     if (!f) f = fopen("sd:/sm64-perf.csv", "w");
     if (!f) return;
-    fprintf(f, "# Profile version,2\n# Timer Hz,%u\n# Build,painting-distance-cache\n# Inclusive phases overlap IRQs; do not sum phase totals.\n", NDS_PERF_HZ);
+    fprintf(f, "# Profile version,2\n# Timer Hz,%u\n# Build,compiled-static-triangles\n# Inclusive phases overlap IRQs; do not sum phase totals.\n", NDS_PERF_HZ);
     fprintf(f, "phase,calls,total_ticks,max_ticks\n");
     for (int i = 0; i < NDS_PERF_PHASES; i++)
         fprintf(f, "%s,%u,%llu,%u\n", sNames[i], phases[i].calls, phases[i].total, phases[i].max);
     fprintf(f, "counter,value\n");
-    static const char *const names[] = {"dl_commands","emitted_vertices","position_tests","texture_misses","texture_evictions","texture_bytes","sample_bytes","remote_submissions","remote_late_polls","surface_geometry_hits","surface_geometry_misses"};
+    static const char *const names[] = {"dl_commands","emitted_vertices","position_tests","texture_misses","texture_evictions","texture_bytes","sample_bytes","remote_submissions","remote_late_polls","surface_geometry_hits","surface_geometry_misses","compiled_triangle_batches"};
     for (int i = 0; i < NDS_COUNT_LIMIT; i++) fprintf(f, "%s,%u\n", names[i], counters[i]);
     fprintf(f, "level,area,frames,total_ticks,max_ticks,frames_over_34ms\n");
     for (int i = 0; i < n; i++) fprintf(f, "%d,%d,%u,%llu,%u,%u\n", sAreas[i].level, sAreas[i].area, sAreas[i].frames, sAreas[i].total, sAreas[i].max, sAreas[i].slow);

@@ -76,3 +76,6 @@ build/*
 
 .DS_Store
 **/.DS_Store
+
+# Python build and regression helpers
+__pycache__/

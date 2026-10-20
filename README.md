@@ -139,3 +139,9 @@ ottenere i millisecondi medi dividere `total_ticks` per Timer Hz e per il numero
 di fotogrammi dell'area, quindi moltiplicare per 1000. Le fasi sono annidate: per
 esempio, gli attori sono inclusi negli oggetti. I totali globali possono
 includere l'inizializzazione, mentre la ripartizione per area copre i fotogrammi.
+
+I blocchi di triangoli delle display list statiche vengono predecodificati
+durante la compilazione. Matrici, illuminazione e liste dinamiche restano
+gestite durante il gioco. Per un confronto con lo stesso renderer e gli asset
+originali usare `make VERSION=us COMPILER=gcc NDS_STATIC_DL=0`; il valore
+predefinito è `1`. Il cambio di opzione rigenera automaticamente gli asset.

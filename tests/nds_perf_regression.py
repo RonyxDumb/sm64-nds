@@ -493,3 +493,77 @@ int main(void){
  return 0;
 }
 ''')
+
+reference=(ROOT/'tests/fixtures/nds_painting_normal_before_integer.c').read_text().replace('normalize_component(', 'reference_component(')
+run('Painting normal packing integer equivalence', r'''
+#include <stdint.h>
+#include <string.h>
+#include <assert.h>
+#include <math.h>
+typedef int8_t s8;typedef int32_t s32;typedef uint32_t u32;typedef float f32;
+#define TARGET_NDS 1
+''' + reference + function('src/game/paintings.c','normalize_component') + r'''
+static void check(float x){assert(normalize_component(x)==reference_component(x));}
+int main(void){
+ check(0);check(-0.0f);check(1);check(-1);check(1.0000001f);check(-1.0000001f);
+ for(int scale=127;scale<=128;scale++)for(int n=0;n<scale;n++){
+  float threshold=(n+0.5)/scale;
+  for(int j=0;j<8;j++){check(threshold);check(-threshold);threshold=nextafterf(threshold,0);}
+  threshold=(n+0.5)/scale;
+  for(int j=0;j<8;j++){check(threshold);check(-threshold);threshold=nextafterf(threshold,1);}
+ }
+ u32 state=0x12345678;
+ for(unsigned n=0;n<2000000;n++){
+  state^=state<<13;state^=state>>17;state^=state<<5;
+  union{u32 bits;float value;} v={.bits=(state%0x3f800001u)|(state&0x80000000u)};
+  check(v.value);
+ }
+ return 0;
+}
+''')
+
+run('Compiled triangle packet renderer boundaries', r'''
+#include <stdint.h>
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+typedef uint8_t u8;typedef uint32_t u32;
+typedef struct {int value;} Vtx_t;typedef struct {Vtx_t v;} Vtx;
+typedef struct {u32 w0;uintptr_t w1;} Gwords;
+#define BATCH_SIZE 96
+#define NDS_GFX_TRI_COMMANDS 32
+#define NDS_COUNT_COMPILED_BATCH 0
+static Vtx vertex_buffer[16];static const Vtx_t*vertex_batch[96];static u8 batch_count;
+static u8 packet[32*7];static unsigned sizes[64],values[512],groups,total;
+static void*segmented_to_virtual(const void*p){(void)p;return packet;}
+static void nds_perf_count(int c,unsigned n){(void)c;(void)n;}
+static void draw_vertices(const Vtx_t**v,int n){sizes[groups++]=n;for(int i=0;i<n;i++)values[total++]=(const Vtx*)v[i]-vertex_buffer;}
+''' + function('src/nds/nds_renderer.c','draw_compiled_triangles') + r'''
+int main(void){
+ unsigned original[32][6],count[32],expectedSizes[64],expectedValues[512];
+ for(int test=0;test<200;test++){
+  unsigned bytes=0;
+  for(int i=0;i<32;i++){
+   count[i]=(rand()%2)?3:6;packet[bytes++]=count[i];
+   for(unsigned j=0;j<count[i];j++){original[i][j]=rand()%16;packet[bytes++]=original[i][j];}
+  }
+  for(int initial=0;initial<=96;initial+=3){
+   unsigned n=initial,ng=0,nv=0;
+   groups=total=0;batch_count=initial;
+   for(int j=0;j<initial;j++){vertex_batch[j]=&vertex_buffer[j%16].v;expectedValues[nv++]=j%16;}
+   for(int i=0;i<32;i++){
+    if(n>90){expectedSizes[ng++]=n;n=0;}
+    for(unsigned j=0;j<count[i];j++)expectedValues[nv++]=original[i][j];
+    n+=count[i];
+   }
+   if(n)expectedSizes[ng++]=n;
+   Gwords w={.w0=32,.w1=0x04000000};draw_compiled_triangles(&w);
+   if(batch_count)draw_vertices((const Vtx_t**)vertex_batch,batch_count);
+   assert(ng==groups&&nv==total);
+   assert(!memcmp(expectedSizes,sizes,ng*sizeof(unsigned)));
+   assert(!memcmp(expectedValues,values,nv*sizeof(unsigned)));
+  }
+ }
+ return 0;
+}
+''')

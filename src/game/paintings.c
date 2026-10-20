@@ -567,6 +567,22 @@ void painting_calculate_triangle_normals(s16 *mesh, s16 numVtx, s16 numTris) {
 }
 
 s8 normalize_component(f32 comp) {
+#ifdef TARGET_NDS
+    /* The original double-precision expression rounds a binary32 value
+     * times 127/128 exactly. Do that same rounding using its significand. */
+    union { f32 value; u32 bits; } input;
+    input.value = comp;
+    u32 magnitude = input.bits & 0x7fffffff;
+    if (magnitude <= 0x3f800000u) {
+        unsigned exponent = magnitude >> 23;
+        if (exponent < 119) return 0;
+        unsigned shift = 150 - exponent;
+        u32 significand = (magnitude & 0x7fffff) | 0x800000;
+        u32 scale = input.bits >> 31 ? 128 : 127;
+        s32 value = (significand * scale + (1u << (shift - 1))) >> shift;
+        return input.bits >> 31 ? -value : value;
+    }
+#endif
     s8 rounded;
 
     if (comp > 0.0) {

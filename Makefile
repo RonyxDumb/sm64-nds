@@ -48,6 +48,8 @@ endif
 ifeq ($(TARGET_NDS),1)
   OPT_FLAGS := -O2 -flto -ffast-math
   GRUCODE := f3dex2
+  NDS_STATIC_DL ?= 1
+  $(eval $(call validate-option,NDS_STATIC_DL,0 1))
   COMPILER := gcc
   DEVKITPRO ?= /opt/devkitpro
   DEVKITARM ?= $(DEVKITPRO)/devkitARM
@@ -950,6 +952,13 @@ NDS_SEGMENT_STUBS_C := $(BUILD_DIR)/nds_segment_stubs.c
 NDS_SEGMENT_STUBS_O := $(NDS_SEGMENT_STUBS_C:.c=.o)
 
 NDS_OVERLAY_SYMS_LD := $(BUILD_DIR)/nds_overlay_syms.ld
+NDS_DL_STAMP := $(BUILD_DIR)/nds_static_dl.config
+.PHONY: nds_dl_config_force
+$(NDS_DL_STAMP): nds_dl_config_force
+	@mkdir -p $(dir $@)
+	@printf '%s\n' '$(NDS_STATIC_DL)' > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
+
 
 $(BUILD_DIR)/actors/%.elf: $(BUILD_DIR)/actors/%.o
 	$(call print,Linking NDS overlay:,$<,$@)
@@ -964,17 +973,26 @@ $(BUILD_DIR)/bin/%.elf: $(BUILD_DIR)/bin/%.o
 	$(call print,Linking NDS overlay:,$<,$@)
 	$(V)$(NDS_OVERLAY_LD) -e 0 -Ttext=$(SEGMENT_ADDRESS) -o $@ $<
 
-$(BUILD_DIR)/actors/%.bin: $(BUILD_DIR)/actors/%.elf
+$(BUILD_DIR)/actors/%.bin: $(BUILD_DIR)/actors/%.elf tools/nds_compile_display_lists.py $(NDS_DL_STAMP)
 	$(call print,Extracting overlay bin:,$<,$@)
 	$(V)$(OBJCOPY) -O binary $< $@
+ifeq ($(NDS_STATIC_DL),1)
+	$(V)$(PYTHON) tools/nds_compile_display_lists.py $< $@
+endif
 
-$(BUILD_DIR)/levels/%/leveldata.bin: $(BUILD_DIR)/levels/%/leveldata.elf
+$(BUILD_DIR)/levels/%/leveldata.bin: $(BUILD_DIR)/levels/%/leveldata.elf tools/nds_compile_display_lists.py $(NDS_DL_STAMP)
 	$(call print,Extracting overlay bin:,$<,$@)
 	$(V)$(OBJCOPY) -O binary $< $@
+ifeq ($(NDS_STATIC_DL),1)
+	$(V)$(PYTHON) tools/nds_compile_display_lists.py $< $@
+endif
 
-$(BUILD_DIR)/bin/%.bin: $(BUILD_DIR)/bin/%.elf
+$(BUILD_DIR)/bin/%.bin: $(BUILD_DIR)/bin/%.elf tools/nds_compile_display_lists.py $(NDS_DL_STAMP)
 	$(call print,Extracting overlay bin:,$<,$@)
 	$(V)$(OBJCOPY) -O binary $< $@
+ifeq ($(NDS_STATIC_DL),1)
+	$(V)$(PYTHON) tools/nds_compile_display_lists.py $< $@
+endif
 
 $(NDS_SEGMENT_STUBS_C): levels/level_defines.h tools/nds_gen_segment_stubs.py
 	$(call print,Generating segment stubs:,$<,$@)

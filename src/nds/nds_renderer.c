@@ -7,6 +7,7 @@
 #include "nds_renderer.h"
 #include "nds_bottom_ui.h"
 #include "nds_perf.h"
+#include "nds_gfx_commands.h"
 #include "c_button.h"
 #include "stick.h"
 #include "stick_base_1.h"
@@ -985,6 +986,26 @@ ITCM_CODE static bool valid_dl_ptr(const Gfx *cmd) {
     return ptr >= 0x02000000 && ptr <= 0x023FFFF8;
 }
 
+static void draw_compiled_triangles(Gwords *words) {
+    const u8 *packet = segmented_to_virtual((const void *)words->w1);
+    unsigned commands = words->w0 & 0xffff;
+    if (!packet || commands > NDS_GFX_TRI_COMMANDS) return;
+    for (unsigned i = 0; i < commands; i++) {
+        if (batch_count > BATCH_SIZE - 6) {
+            draw_vertices(vertex_batch, batch_count);
+            batch_count = 0;
+        }
+        unsigned count = *packet++;
+        if (count != 3 && count != 6) return;
+        for (unsigned j = 0; j < count; j++) {
+            unsigned index = *packet++;
+            if (index >= 16) return;
+            vertex_batch[batch_count++] = &vertex_buffer[index].v;
+        }
+    }
+    nds_perf_count(NDS_COUNT_COMPILED_BATCH, 1);
+}
+
 ITCM_CODE static void execute(Gfx* cmd) {
 
     int cmd_budget = 20000;
@@ -1002,13 +1023,18 @@ ITCM_CODE static void execute(Gfx* cmd) {
         const uint8_t opcode = cmd->words.w0 >> 24;
         processed++;
 
-        if ((opcode != G_TRI1 && opcode != G_TRI2 && batch_count > 0) || batch_count > BATCH_SIZE - 6) {
+        if ((opcode != G_TRI1 && opcode != G_TRI2 && opcode != NDS_GFX_TRI_BATCH && batch_count > 0) || batch_count > BATCH_SIZE - 6) {
             draw_vertices(vertex_batch, batch_count);
             batch_count = 0;
         }
 
         switch (opcode) {
             case G_VTX:            g_vtx(&cmd->words);            break;
+            case NDS_GFX_TRI_BATCH:
+                if (!(cmd->words.w0 & 0xffff) || (cmd->words.w0 & 0xffff) > NDS_GFX_TRI_COMMANDS) goto done;
+                draw_compiled_triangles(&cmd->words);
+                cmd += (cmd->words.w0 & 0xffff) - 1;
+                break;
             case G_TRI1:           g_tri1(&cmd->words);           break;
             case G_TRI2:           g_tri2(&cmd->words);           break;
             case G_TEXTURE:        g_texture(&cmd->words);        break;
