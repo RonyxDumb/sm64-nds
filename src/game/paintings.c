@@ -16,6 +16,10 @@
 #include "paintings.h"
 #include "save_file.h"
 #include "segment2.h"
+#include "nds/nds_perf.h"
+#ifdef TARGET_NDS
+#include <string.h>
+#endif
 
 #define RIPPLE_LEFT 0x20
 
@@ -410,27 +414,21 @@ void painting_update_ripple_state(struct Painting *painting) {
     }
 }
 
-s16 calculate_ripple_at_point(struct Painting *painting, f32 posX, f32 posY) {
-
-    f32 rippleMag = painting->currRippleMag;
-
-    f32 rippleRate = painting->currRippleRate;
-
+static f32 painting_point_distance(struct Painting *painting, f32 posX, f32 posY) {
+    f32 rippleX = painting->rippleX, rippleY = painting->rippleY;
     f32 dispersionFactor = painting->dispersionFactor;
-
-    f32 rippleTimer = painting->rippleTimer;
-
-    f32 rippleX = painting->rippleX;
-    f32 rippleY = painting->rippleY;
-
     f32 distanceToOrigin;
-    f32 rippleDistance;
-
     posX *= painting->size / PAINTING_SIZE;
     posY *= painting->size / PAINTING_SIZE;
     distanceToOrigin = sqrtf((posX - rippleX) * (posX - rippleX) + (posY - rippleY) * (posY - rippleY));
 
-    rippleDistance = distanceToOrigin / dispersionFactor;
+    return distanceToOrigin / dispersionFactor;
+}
+
+static s16 painting_ripple_from_distance(struct Painting *painting, f32 rippleDistance) {
+    f32 rippleMag = painting->currRippleMag;
+    f32 rippleRate = painting->currRippleRate;
+    f32 rippleTimer = painting->rippleTimer;
     if (rippleTimer < rippleDistance) {
 
         return 0;
@@ -441,6 +439,64 @@ s16 calculate_ripple_at_point(struct Painting *painting, f32 posX, f32 posY) {
         return round_float(rippleZ);
     }
 }
+
+
+s16 calculate_ripple_at_point(struct Painting *painting, f32 posX, f32 posY) {
+    return painting_ripple_from_distance(painting, painting_point_distance(painting, posX, posY));
+}
+
+#ifdef TARGET_NDS
+#define NDS_PAINTING_CACHE_POINTS 160
+static struct {
+    const struct Painting *painting;
+    f32 size, x, y, dispersion;
+    s16 coords[NDS_PAINTING_CACHE_POINTS][2];
+    f32 distance[NDS_PAINTING_CACHE_POINTS];
+    u32 valid[(NDS_PAINTING_CACHE_POINTS + 31) / 32];
+} sPaintingDistances;
+
+static void painting_prepare_distances(struct Painting *painting) {
+    if (sPaintingDistances.painting != painting || sPaintingDistances.size != painting->size
+        || sPaintingDistances.x != painting->rippleX || sPaintingDistances.y != painting->rippleY
+        || sPaintingDistances.dispersion != painting->dispersionFactor) {
+        memset(sPaintingDistances.valid, 0, sizeof(sPaintingDistances.valid));
+        sPaintingDistances.painting = painting;
+        sPaintingDistances.size = painting->size;
+        sPaintingDistances.x = painting->rippleX;
+        sPaintingDistances.y = painting->rippleY;
+        sPaintingDistances.dispersion = painting->dispersionFactor;
+    }
+}
+
+static f32 painting_cached_distance(struct Painting *painting, unsigned index, s16 x, s16 y) {
+    if (index >= NDS_PAINTING_CACHE_POINTS) return painting_point_distance(painting, x, y);
+    u32 mask = 1u << (index & 31);
+    if (!(sPaintingDistances.valid[index >> 5] & mask)
+        || sPaintingDistances.coords[index][0] != x || sPaintingDistances.coords[index][1] != y) {
+        sPaintingDistances.distance[index] = painting_point_distance(painting, x, y);
+        sPaintingDistances.coords[index][0] = x;
+        sPaintingDistances.coords[index][1] = y;
+        sPaintingDistances.valid[index >> 5] |= mask;
+    }
+    return sPaintingDistances.distance[index];
+}
+
+/* Painting coordinates are integers. Inside this bound, all cross-product
+ * intermediates are exactly representable in float; integer arithmetic gives
+ * the same normals without the ARM9 software floating-point operations. */
+static int painting_integer_normal(Vec3f out, const s16 *a, const s16 *b, const s16 *c) {
+    for (int i = 0; i < 3; i++) {
+        if ((u32)(a[i] + 1024) > 2048 || (u32)(b[i] + 1024) > 2048
+            || (u32)(c[i] + 1024) > 2048) return 0;
+    }
+    s32 dx1 = b[0] - a[0], dy1 = b[1] - a[1], dz1 = b[2] - a[2];
+    s32 dx2 = c[0] - b[0], dy2 = c[1] - b[1], dz2 = c[2] - b[2];
+    out[0] = dy1 * dz2 - dz1 * dy2;
+    out[1] = dz1 * dx2 - dx1 * dz2;
+    out[2] = dx1 * dy2 - dy1 * dx2;
+    return 1;
+}
+#endif
 
 s16 ripple_if_movable(struct Painting *painting, s16 movable, s16 posX, s16 posY) {
     s16 rippleZ = 0;
@@ -458,12 +514,21 @@ void painting_generate_mesh(struct Painting *painting, s16 *mesh, s16 numTris) {
     if (gPaintingMesh == NULL) {
     }
 
+#ifdef TARGET_NDS
+    painting_prepare_distances(painting);
+#endif
     for (i = 0; i < numTris; i++) {
         gPaintingMesh[i].pos[0] = mesh[i * 3 + 1];
         gPaintingMesh[i].pos[1] = mesh[i * 3 + 2];
 
+#ifdef TARGET_NDS
+        gPaintingMesh[i].pos[2] = mesh[i * 3 + 3]
+            ? painting_ripple_from_distance(painting, painting_cached_distance(painting, i,
+                gPaintingMesh[i].pos[0], gPaintingMesh[i].pos[1])) : 0;
+#else
         gPaintingMesh[i].pos[2] = ripple_if_movable(painting, mesh[i * 3 + 3],
                                                     gPaintingMesh[i].pos[0], gPaintingMesh[i].pos[1]);
+#endif
     }
 }
 
@@ -479,6 +544,10 @@ void painting_calculate_triangle_normals(s16 *mesh, s16 numVtx, s16 numTris) {
         s16 v1 = mesh[tri + 1];
         s16 v2 = mesh[tri + 2];
 
+#ifdef TARGET_NDS
+        if (painting_integer_normal(gPaintingTriNorms[i], gPaintingMesh[v0].pos,
+                                    gPaintingMesh[v1].pos, gPaintingMesh[v2].pos)) continue;
+#endif
         f32 x0 = gPaintingMesh[v0].pos[0];
         f32 y0 = gPaintingMesh[v0].pos[1];
         f32 z0 = gPaintingMesh[v0].pos[2];
@@ -717,9 +786,14 @@ Gfx *display_painting_rippling(struct Painting *painting) {
     s16 numTris = mesh[numVtx * 3 + 1];
     Gfx *dlist;
 
+    NDS_PERF_START(waveStart);
     painting_generate_mesh(painting, mesh, numVtx);
+    NDS_PERF_END(NDS_PERF_PAINTING_WAVE, waveStart);
+    NDS_PERF_START(normStart);
     painting_calculate_triangle_normals(mesh, numVtx, numTris);
     painting_average_vertex_normals(neighborTris, numVtx);
+    NDS_PERF_END(NDS_PERF_PAINTING_NORMALS, normStart);
+    NDS_PERF_START(drawStart);
 
     switch (painting->textureType) {
         case PAINTING_IMAGE:
@@ -730,6 +804,7 @@ Gfx *display_painting_rippling(struct Painting *painting) {
             break;
     }
 
+    NDS_PERF_END(NDS_PERF_PAINTING_DRAW, drawStart);
     mem_pool_free(gEffectsMemoryPool, gPaintingMesh);
     mem_pool_free(gEffectsMemoryPool, gPaintingTriNorms);
     return dlist;

@@ -26,7 +26,8 @@ static const char *const sNames[] = {
     "level_commands_inclusive", "scene_build_inclusive", "objects_inclusive",
     "terrain_objects_inclusive", "object_collisions_inclusive", "actors_inclusive",
     "object_cleanup_inclusive", "camera_inclusive", "level_io_inclusive",
-    "audio_sequences", "audio_game", "audio_publish", "vblank_wait_inclusive"
+    "audio_sequences", "audio_game", "audio_publish", "vblank_wait_inclusive",
+    "painting_wave_inclusive", "painting_normals_inclusive", "painting_draw_inclusive"
 };
 
 void nds_perf_init(void) {
@@ -82,7 +83,7 @@ static void dump(void) {
     FILE *f = fopen("fat:/sm64-perf.csv", "w");
     if (!f) f = fopen("sd:/sm64-perf.csv", "w");
     if (!f) return;
-    fprintf(f, "# Profile version,2\n# Timer Hz,%u\n# Build,surface-geometry-cache\n# Inclusive phases overlap IRQs; do not sum phase totals.\n", NDS_PERF_HZ);
+    fprintf(f, "# Profile version,2\n# Timer Hz,%u\n# Build,painting-distance-cache\n# Inclusive phases overlap IRQs; do not sum phase totals.\n", NDS_PERF_HZ);
     fprintf(f, "phase,calls,total_ticks,max_ticks\n");
     for (int i = 0; i < NDS_PERF_PHASES; i++)
         fprintf(f, "%s,%u,%llu,%u\n", sNames[i], phases[i].calls, phases[i].total, phases[i].max);

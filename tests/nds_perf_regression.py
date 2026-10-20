@@ -20,10 +20,12 @@ def run(name, source):
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / 'test.c'
         path.write_text(source)
-        subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
-                        '-Wno-pointer-to-int-cast', '-fsanitize=undefined', '-fno-sanitize-recover=all',
-                        str(path), '-lm', '-o', str(path.with_suffix(''))], check=True)
-        subprocess.run([str(path.with_suffix(''))], check=True)
+        variants = [[], ['-ffast-math']] if name.startswith('Painting ') else [[]]
+        for flags in variants:
+            subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
+                            '-Wno-pointer-to-int-cast', '-fsanitize=undefined', '-fno-sanitize-recover=all',
+                            *flags, str(path), '-lm', '-o', str(path.with_suffix(''))], check=True)
+            subprocess.run([str(path.with_suffix(''))], check=True)
     print(name + ': PASS')
 
 run('ARM7 frequency cache', r'''
@@ -420,6 +422,74 @@ int main(void){
    assert(actual[i][j]==want);assert(!memcmp(&floats[i][j],&wantFloat,4));
   }
  }
+ return 0;
+}
+''')
+
+painting = (ROOT / 'src/game/paintings.c').read_text()
+start = painting.index('#define NDS_PAINTING_CACHE_POINTS')
+end = painting.index('/* Painting coordinates', start)
+reference = (ROOT / 'tests/fixtures/nds_painting_ripple_before_cache.c').read_text().replace('calculate_ripple_at_point(', 'reference_ripple(')
+point = function('src/game/paintings.c', 'painting_point_distance').replace('painting_point_distance(', 'actual_point_distance(')
+run('Painting wave cache equivalence and invalidation', r'''
+#include <stdint.h>
+#include <math.h>
+#include <string.h>
+#include <assert.h>
+typedef int16_t s16;typedef uint32_t u32;typedef float f32;
+#define PAINTING_SIZE 614.0
+#define M_PI 3.14159265358979323846
+struct Painting {f32 currRippleMag,currRippleRate,dispersionFactor,rippleTimer,rippleX,rippleY,size;};
+static unsigned calculations;
+''' + function('src/game/geo_misc.c', 'round_float') + reference + point + r'''
+static f32 painting_point_distance(struct Painting*p,f32 x,f32 y){calculations++;return actual_point_distance(p,x,y);}
+''' + function('src/game/paintings.c', 'painting_ripple_from_distance') + '\n' + painting[start:end] + r'''
+int main(void){
+ struct Painting p[2]={{80,0.08f,20,0,307,307,614},{60,0.1f,15,0,180,500,500}};
+ for(int frame=0;frame<1000;frame++){
+  struct Painting*w=&p[(frame/173)%2];w->rippleTimer=frame;w->currRippleMag=80-frame/20.0f;
+  if(frame%71==0)w->rippleX+=1;
+  if(frame%97==0)w->rippleY-=1;
+  w->currRippleRate=0.01f+(frame%11)/100.0f;
+  if(frame%113==0)w->size+=1;
+  if(frame%127==0)w->dispersionFactor+=0.25f;
+  painting_prepare_distances(w);
+  for(int i=0;i<160;i++){
+   s16 x=(i*37)%615,y=(i*91)%615;
+   s16 want=reference_ripple(w,x,y);
+   f32 distance=painting_cached_distance(w,i,x,y);
+   assert(painting_ripple_from_distance(w,distance)==want);
+   unsigned before=calculations;
+   assert(painting_cached_distance(w,i,x,y)==distance&&calculations==before);
+   assert(painting_cached_distance(w,i,x+1,y)==actual_point_distance(w,x+1,y));
+   (void)painting_cached_distance(w,i,x,y);
+  }
+  assert(painting_cached_distance(w,160,1,2)==actual_point_distance(w,1,2));
+ }
+ return 0;
+}
+''')
+
+run('Painting integer normals exact bounded arithmetic', r'''
+#include <stdint.h>
+#include <stdlib.h>
+#include <assert.h>
+typedef int16_t s16;typedef int32_t s32;typedef uint32_t u32;typedef float Vec3f[3];
+''' + function('src/game/paintings.c', 'painting_integer_normal') + r'''
+int main(void){
+ for(int n=0;n<200000;n++){
+  s16 a[3],b[3],c[3];float expected[3],actual[3];
+  for(int j=0;j<3;j++){a[j]=(rand()%2049)-1024;b[j]=(rand()%2049)-1024;c[j]=(rand()%2049)-1024;}
+  float x0=a[0],y0=a[1],z0=a[2],x1=b[0],y1=b[1],z1=b[2],x2=c[0],y2=c[1],z2=c[2];
+  expected[0]=(y1-y0)*(z2-z1)-(z1-z0)*(y2-y1);
+  expected[1]=(z1-z0)*(x2-x1)-(x1-x0)*(z2-z1);
+  expected[2]=(x1-x0)*(y2-y1)-(y1-y0)*(x2-x1);
+  assert(painting_integer_normal(actual,a,b,c));
+  for(int j=0;j<3;j++)assert(expected[j]==actual[j]);
+ }
+ s16 a[3]={1025,0,0},b[3]={0,1,0},c[3]={0,0,1};float out[3]={123,123,123};
+ assert(!painting_integer_normal(out,a,b,c)&&out[0]==123);
+ a[0]=-1025;assert(!painting_integer_normal(out,a,b,c));
  return 0;
 }
 ''')
