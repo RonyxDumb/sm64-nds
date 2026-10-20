@@ -19,6 +19,7 @@ extern u8 gNdsAudioDisabled;
 #include "game_init.h"
 #ifdef TARGET_NDS
 #include "../nds/nds_netplay.h"
+#include "../nds/nds_perf.h"
 #endif
 #include "main.h"
 #include "memory.h"
@@ -584,6 +585,10 @@ void thread5_game_loop(UNUSED void *arg) {
             draw_reset_bars();
             continue;
         }
+#ifdef TARGET_NDS
+        unsigned ndsFrameStart = nds_perf_now();
+        unsigned ndsLogicStart = ndsFrameStart;
+#endif
         profiler_log_thread5_time(THREAD5_START);
 
         if (gControllerBits) {
@@ -600,7 +605,9 @@ void thread5_game_loop(UNUSED void *arg) {
         select_gfx_pool();
         read_controller_inputs();
         addr = level_script_execute(addr);
-
+#ifdef TARGET_NDS
+        nds_perf_record(NDS_PERF_LOGIC, ndsLogicStart);
+#endif
         display_and_vsync();
 
         if (gShowDebugText) {
@@ -611,6 +618,7 @@ void thread5_game_loop(UNUSED void *arg) {
 #ifdef TARGET_NDS
 
         nds_netplay_update();
+        nds_perf_finish_frame(ndsFrameStart);
 #endif
     }
 }

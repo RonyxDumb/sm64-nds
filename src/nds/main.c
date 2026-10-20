@@ -19,6 +19,7 @@
 #include "game/save_file.h"
 #include "nds_renderer.h"
 #include "nds_overlay.h"
+#include "nds_perf.h"
 #include "nds_sample_cache.h"
 #include "nds_arm7_copy.h"
 #include "nds_net.h"
@@ -136,8 +137,12 @@ void exec_display_list(struct SPTask *spTask) {
     }
 #endif
 
+    unsigned t = nds_perf_now();
     nds_scache_update();
+    nds_perf_record(NDS_PERF_SAMPLE, t);
+    t = nds_perf_now();
     nds_net_update();
+    nds_perf_record(NDS_PERF_NETWORK, t);
 }
 
 
@@ -271,10 +276,12 @@ static void nds_update_note_mute_flags(void) {
 }
 
 static void update_audio(void) {
+    unsigned perfStart = nds_perf_now();
     gNdsAudioTick++;
 
     if (gNdsAudioDisabled) {
         IPC_SendSync(0);
+        nds_perf_record(NDS_PERF_AUDIO, perfStart);
         return;
     }
 
@@ -298,8 +305,8 @@ static void update_audio(void) {
         process_sequences(0);
         nds_scache_retry_pending();
 
-        /* Classifica anche le nuove note, compresi gli SFX del menu pausa. */
-        nds_update_note_mute_flags();
+        /* The final pass below classifies newly allocated notes too.
+         * Do not repeat the same full scan twice after the sequencer. */
 
     } else if (nds_audio_state == 1) {
         int i;
@@ -317,6 +324,7 @@ static void update_audio(void) {
     }
 
     IPC_SendSync(0);
+    nds_perf_record(NDS_PERF_AUDIO, perfStart);
 }
 
 
@@ -1025,6 +1033,7 @@ static void nds_fatal_screen(const char *what) {
 /* ------------------------------------------------------------------------- */
 
 int main(void) {
+    nds_perf_init();
     const size_t poolSize = 0x158000;
     u8 *pool;
 

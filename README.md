@@ -119,3 +119,15 @@ Repository upstream:
 - https://github.com/TobiasFriedly/sm64-nds
 
 Un ringraziamento a tutti i contributori della community di reverse engineering, homebrew e decompilazione di Super Mario 64.
+## Verifica delle prestazioni
+
+Sul branch `bottom-screen-ui`, premere e rilasciare SELECT durante il gioco
+salva `sm64-perf.csv` nella radice della scheda SD, se scrivibile. Il file
+contiene tempi aggregati di logica, renderer, HUD/dialoghi, audio, caricamenti,
+rete e fotogrammi per livello/area. Ogni esportazione sostituisce la precedente;
+i dati coprono tutta la sessione. La scrittura può causare una pausa momentanea.
+
+I tempi sono inclusivi: gli interrupt audio possono sovrapporsi alle altre fasi,
+quindi non sommare le colonne delle fasi. I test host si eseguono con
+`python3 tests/nds_perf_regression.py` e richiedono Python 3 e un compilatore C.
+Confermano le invarianti degli helper modificati; non misurano gli FPS del DS.

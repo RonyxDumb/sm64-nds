@@ -4,6 +4,7 @@
 
 #include "nds_include.h"
 #include "nds_sample_cache.h"
+#include "nds_perf.h"
 #include "nds_arm7_copy.h"
 
 #include "audio/internal.h"
@@ -27,7 +28,6 @@
 #define SC_ARENA_STEP     0x4000
 #define SC_HEAP_RESERVE   0x4000
 
-#define SC_EAGER_BUDGET   0x40000
 #define SC_FRAME_BUDGET   0x4000
 #define SC_PREFETCH_RESERVE_SHIFT 3
 
@@ -120,33 +120,33 @@ static u8 sReady;
 
 #define SC_IS_REMOTE(a) ((u32) (a) >= 0x03000000)
 
-static u8 sRemoteDead;
+static u8 sRemotePending;
+static u32 sRemoteDest, sRemoteLen, sRemoteStarted;
 
-static int remote_copy_chunk(u32 dst, const void *src, u32 len) {
+static int remote_copy_begin(u32 dst, u32 len) {
     struct NdsCopyCmd cmd;
-    u32 spin;
-    if (sRemoteDead >= 3) {
-        return 0;
-    }
-    while (fifoCheckValue32(NDS_COPY_FIFO_CHANNEL)) {
-        fifoGetValue32(NDS_COPY_FIFO_CHANNEL);
-    }
-    DC_FlushRange(src, len);
-    cmd.dst = dst;
-    cmd.src = (u32) src;
-    cmd.len = len;
-    if (!fifoSendDatamsg(NDS_COPY_FIFO_CHANNEL, sizeof(cmd), (u8 *) &cmd)) {
-        return 0;
-    }
+    /* Only the main-thread loader owns sStage, and it stays immutable
+     * until ARM7 acknowledges. There is no polling loop on ARM9. */
+    if (sRemotePending) return 0;
+    while (fifoCheckValue32(NDS_COPY_FIFO_CHANNEL)) fifoGetValue32(NDS_COPY_FIFO_CHANNEL);
+    DC_FlushRange(sStage, len);
+    cmd.dst = dst; cmd.src = (u32)sStage; cmd.len = len;
+    if (!fifoSendDatamsg(NDS_COPY_FIFO_CHANNEL, sizeof(cmd), (u8 *)&cmd)) return 0;
+    sRemoteDest = dst; sRemoteLen = len; sRemoteStarted = nds_perf_now();
+    sRemotePending = 1;
+    nds_perf_count(NDS_COUNT_COPY_PENDING, 1);
+    return 1;
+}
 
-    for (spin = 0; spin < 300000; spin++) {
-        if (fifoCheckValue32(NDS_COPY_FIFO_CHANNEL)) {
-            sRemoteDead = 0;
-            return fifoGetValue32(NDS_COPY_FIFO_CHANNEL) == dst;
-        }
+static int remote_copy_poll(void) {
+    if (!fifoCheckValue32(NDS_COPY_FIFO_CHANNEL)) {
+        if (nds_perf_now() - sRemoteStarted > NDS_PERF_HZ / 20)
+            nds_perf_count(NDS_COUNT_COPY_STALL, 1);
+        return 0;
     }
-    sRemoteDead++;
-    return 0;
+    unsigned ack = fifoGetValue32(NDS_COPY_FIFO_CHANNEL);
+    sRemotePending = 0;
+    return ack == sRemoteDest ? 1 : -1;
 }
 
 static struct { u32 blob; u32 off; } sInitRefs[SC_MAX_REFS];
@@ -358,107 +358,46 @@ static int tbl_read_at(u32 offset, void *dst, u32 len) {
     return 1;
 }
 
-static int load_piece(struct ScEntry *e, u8 *dstBase, u32 pieceOff, u32 len) {
-    u32 filePos;
-
-    if (e == NULL || dstBase == NULL || len == 0 || pieceOff > e->size
-        || len > e->size - pieceOff) {
-        return 0;
-    }
-    filePos = e->fileOff + pieceOff;
-
-    if (SC_IS_REMOTE(dstBase)) {
-        u32 done = 0;
-        while (done < len) {
-            u32 n = len - done;
-            if (n > NDS_COPY_MAX_CHUNK) {
-                n = NDS_COPY_MAX_CHUNK;
-            }
-            if (!tbl_read_at(filePos + done, sStage, n)) {
-                return 0;
-            }
-            if (pieceOff + done == 0) {
-                e->halfOff = RD32(sStage);
-            }
-            if (!remote_copy_chunk((u32) dstBase + pieceOff + done, sStage, n)) {
-                return 0;
-            }
-            done += n;
-        }
-    } else {
-        if (!tbl_read_at(filePos, dstBase + pieceOff, len)) {
-            return 0;
-        }
-        if (pieceOff == 0) {
-            e->halfOff = RD32(dstBase);
-        }
-        DC_FlushRange(dstBase + pieceOff, len);
-    }
-    return 1;
-}
-
-static int load_entry_sync(u16 idx, int allowEvict) {
-    struct ScEntry *e;
-    u8 *addr;
-
-    if (idx >= sEntryCount) {
-        return 0;
-    }
-    e = &sEntries[idx];
-    if (e->state == SC_RESIDENT) {
-        return 1;
-    }
-    if (e->state == SC_FAILED || e->state == SC_LOADING || sTblFile == NULL
-        || sLoadEntry == idx) {
-        return 0;
-    }
-    addr = reserve_space(e->size, allowEvict);
-    if (addr == NULL) {
-        return 0;
-    }
-    if (!load_piece(e, addr, 0, e->size)) {
-        free_block(addr, SC_ALIGN(e->size));
-        e->state = SC_FAILED;
-        return 0;
-    }
-    e->addr = addr;
-    e->lastUsed = gNdsAudioTick;
-    e->state = SC_RESIDENT;
-    gNdsCntLoads++;
-    return 1;
+static void load_failed(struct ScEntry *e) {
+    /* Called only after a failed read/send or a received ACK: no remote
+     * DMA/copy is still allowed to own this allocation or sStage. */
+    free_block(e->addr, SC_ALIGN(e->size));
+    e->addr = NULL; e->state = SC_FAILED;
+    sLoadEntry = SC_ENTRY_NONE;
 }
 
 static u32 load_pump(u32 budget) {
-    struct ScEntry *e;
-    u32 want;
-    if (sLoadEntry == SC_ENTRY_NONE || sLoadEntry >= sEntryCount || budget == 0) {
-        return 0;
+    if (sLoadEntry == SC_ENTRY_NONE || sLoadEntry >= sEntryCount || !budget) return 0;
+    struct ScEntry *e = &sEntries[sLoadEntry];
+    if (sRemotePending) {
+        int result = remote_copy_poll();
+        if (!result) return 0;
+        if (result < 0) { load_failed(e); return 0; }
+        sLoadDone += sRemoteLen;
     }
-    e = &sEntries[sLoadEntry];
-    if (e->state != SC_LOADING || e->addr == NULL || sLoadDone >= e->size) {
-        e->state = SC_FAILED;
-        e->addr = NULL;
-        sLoadEntry = SC_ENTRY_NONE;
-        sLoadDone = 0;
-        return 0;
-    }
-    want = e->size - sLoadDone;
-    if (want > budget) {
-        want = budget;
-    }
-    if (!load_piece(e, e->addr, sLoadDone, want)) {
-        free_block(e->addr, SC_ALIGN(e->size));
-        e->addr = NULL;
-        e->state = SC_FAILED;
-        sLoadEntry = SC_ENTRY_NONE;
-        return want;
-    }
-    sLoadDone += want;
     if (sLoadDone >= e->size) {
-        e->lastUsed = gNdsAudioTick;
-        e->state = SC_RESIDENT;
-        sLoadEntry = SC_ENTRY_NONE;
-        gNdsCntLoads++;
+        e->lastUsed = gNdsAudioTick; e->state = SC_RESIDENT;
+        sLoadEntry = SC_ENTRY_NONE; gNdsCntLoads++;
+        return 0;
+    }
+    u32 want = e->size - sLoadDone;
+    if (want > budget) want = budget;
+    int remote = SC_IS_REMOTE(e->addr);
+    u32 chunk = remote ? NDS_COPY_MAX_CHUNK : 0x1000;
+    if (want > chunk) want = chunk;
+    u8 *dst = remote ? sStage : e->addr + sLoadDone;
+    if (!tbl_read_at(e->fileOff + sLoadDone, dst, want)) { load_failed(e); return want; }
+    nds_perf_count(NDS_COUNT_AUDIO_BYTES, want);
+    if (!sLoadDone) e->halfOff = RD32(dst);
+    if (remote) {
+        if (!remote_copy_begin((u32)e->addr + sLoadDone, want)) load_failed(e);
+    } else {
+        DC_FlushRange(dst, want);
+        sLoadDone += want;
+        if (sLoadDone >= e->size) {
+            e->lastUsed = gNdsAudioTick; e->state = SC_RESIDENT;
+            sLoadEntry = SC_ENTRY_NONE; gNdsCntLoads++;
+        }
     }
     return want;
 }
@@ -652,94 +591,49 @@ void nds_scache_retry_pending(void) {
 }
 
 void nds_scache_bank_loaded(s32 bankId) {
-    u16 start, count, i;
-    if (!sReady || bankId < 0 || bankId >= sBankCount) {
-        return;
-    }
-    start = sBankRefStart[bankId];
-    count = sBankRefCount[bankId];
-    if (bankId >= 0x0B) {
-
-        u32 budget = sTotalCache / 2;
-        if (budget > SC_EAGER_BUDGET) {
-            budget = SC_EAGER_BUDGET;
-        }
-        for (i = 0; i < count; i++) {
-            u16 idx = sBankRefs[start + i];
-            if (idx == SC_ENTRY_NONE || idx >= sEntryCount) {
-                continue;
-            }
-            struct ScEntry *e = &sEntries[idx];
-            if (e->state == SC_RESIDENT) {
-                e->lastUsed = gNdsAudioTick;
-            } else if (e->size <= budget && load_entry_sync(idx, 1)) {
-                budget -= e->size;
-            } else if (e->state == SC_ABSENT) {
-                queue_prefetch(idx);
-            }
-
-        }
-    } else {
-
-        for (i = 0; i < count; i++) {
-            u16 idx = sBankRefs[start + i];
-            if (idx == SC_ENTRY_NONE || idx >= sEntryCount) {
-                continue;
-            }
-            queue_prefetch(idx);
-        }
+    if (!sReady || bankId < 0 || bankId >= sBankCount) return;
+    unsigned start = sBankRefStart[bankId], count = sBankRefCount[bankId];
+    /* This hook may run inside the audio IRQ. Queue bank warming instead
+     * of reading hundreds of KiB from the filesystem in that interrupt. */
+    for (unsigned i = 0; i < count; i++) {
+        u16 idx = sBankRefs[start + i];
+        if (idx >= sEntryCount) continue;
+        if (sEntries[idx].state == SC_RESIDENT) sEntries[idx].lastUsed = gNdsAudioTick;
+        else queue_prefetch(idx);
     }
 }
 
 void nds_scache_update(void) {
-    u32 budget = SC_FRAME_BUDGET;
-    if (!sReady) {
-        return;
-    }
+    if (!sReady) return;
+    u32 start = nds_perf_now(), budget = SC_FRAME_BUDGET;
     quarantine_flush();
-
-    budget -= load_pump(budget);
-
-    while (budget > 0 && sLoadEntry == SC_ENTRY_NONE && sMissTail != sMissHead) {
-        u16 idx = sMissRing[sMissTail];
-        struct ScEntry *e = &sEntries[idx];
-        sMissTail = (sMissTail + 1) % SC_MISS_RING;
-        e->flags &= ~SC_F_IN_MISS_RING;
-        if (e->state != SC_ABSENT) {
-            continue;
-        }
-        if (e->size <= budget) {
-            if (load_entry_sync(idx, 1)) {
-                budget -= e->size;
+    /* The deadline is checked between bounded reads. A filesystem read
+     * itself is synchronous and can exceed it on a slow flashcart. */
+    while (budget && nds_perf_now() - start < NDS_PERF_HZ / 500) {
+        if (sLoadEntry == SC_ENTRY_NONE) {
+            u16 idx = SC_ENTRY_NONE;
+            int urgent = 0;
+            while (sMissTail != sMissHead) {
+                u16 next = sMissRing[sMissTail];
+                sMissTail = (sMissTail + 1) % SC_MISS_RING;
+                sEntries[next].flags &= ~SC_F_IN_MISS_RING;
+                if (sEntries[next].state == SC_ABSENT) { idx = next; urgent = 1; break; }
             }
-        } else if (load_begin(idx, 1)) {
-            budget -= load_pump(budget);
-        }
-    }
-
-    while (budget > 0 && sLoadEntry == SC_ENTRY_NONE && sPrefetchHead != sPrefetchTail) {
-        u16 idx = sPrefetchQueue[sPrefetchHead % SC_MAX_ENTRIES];
-        struct ScEntry *e = &sEntries[idx];
-        if (e->state != SC_ABSENT) {
-            sPrefetchHead++;
-            e->flags &= ~SC_F_IN_PREFETCH;
-            continue;
-        }
-        if (sFreeBytes + sQuarBytes < (sTotalCache >> SC_PREFETCH_RESERVE_SHIFT) + SC_ALIGN(e->size)) {
-
-            sPrefetchHead++;
-            e->flags &= ~SC_F_IN_PREFETCH;
-            continue;
-        }
-        sPrefetchHead++;
-        e->flags &= ~SC_F_IN_PREFETCH;
-        if (e->size <= budget) {
-            if (load_entry_sync(idx, 0)) {
-                budget -= e->size;
+            while (idx == SC_ENTRY_NONE && sPrefetchHead != sPrefetchTail) {
+                u16 next = sPrefetchQueue[sPrefetchHead++ % SC_MAX_ENTRIES];
+                struct ScEntry *e = &sEntries[next];
+                e->flags &= ~SC_F_IN_PREFETCH;
+                if (e->state != SC_ABSENT) continue;
+                if (sFreeBytes + sQuarBytes < (sTotalCache >> SC_PREFETCH_RESERVE_SHIFT) + SC_ALIGN(e->size)) continue;
+                idx = next;
             }
-        } else if (load_begin(idx, 0)) {
-            budget -= load_pump(budget);
+            if (idx == SC_ENTRY_NONE) break;
+            if (!load_begin(idx, urgent)) continue;
         }
+        u32 used = load_pump(budget);
+        budget -= used;
+        if (sRemotePending) break;
+        if (!used && sLoadEntry != SC_ENTRY_NONE) break;
     }
 }
 
@@ -762,7 +656,7 @@ s32 nds_scache_init(void) {
     sLoadEntry = SC_ENTRY_NONE;
     sLoadDone = 0;
     sTblPosition = -1;
-    sRemoteDead = 0;
+    sRemotePending = 0;
 
     memset(sEntries, 0, sizeof(sEntries));
     memset(sBankRefs, 0xFF, sizeof(sBankRefs));

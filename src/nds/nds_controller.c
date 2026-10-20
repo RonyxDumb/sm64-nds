@@ -3,6 +3,7 @@
 #include "nds_include.h"
 #include "nds_renderer.h"
 #include "nds_bottom_ui.h"
+#include "nds_perf.h"
 #include "engine/math_util.h"
 #include "lib/src/osContInternal.h"
 #include "nds_net.h"
@@ -33,6 +34,7 @@ void osContGetReadData(OSContPad *pad) {
 
     scanKeys();
     const u32 keys = keysHeld();
+    if (keysUp() & KEY_SELECT) nds_perf_request_dump();
 
     if (keys & KEY_A) pad->button |= A_BUTTON;
     if (keys & KEY_B) pad->button |= B_BUTTON;

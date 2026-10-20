@@ -9,7 +9,12 @@
 
 extern OSMgrArgs piMgrArgs;
 
+#ifdef TARGET_NDS
+#include "nds_perf.h"
+u64 osClockRate = NDS_PERF_HZ;
+#else
 u64 osClockRate = 62500000;
+#endif
 
 s32 osPiStartDma(UNUSED OSIoMesg *mb, UNUSED s32 priority, UNUSED s32 direction,
                  uintptr_t devAddr, void *vAddr, size_t nbytes,
@@ -75,7 +80,11 @@ void osViSwapBuffer(UNUSED void *vaddr) {
 }
 
 OSTime osGetTime(void) {
+#ifdef TARGET_NDS
+    return nds_perf_now();
+#else
     return 0;
+#endif
 }
 
 #ifdef TARGET_NDS
@@ -110,8 +119,12 @@ void osInvalDCache(UNUSED void *a, UNUSED size_t b) {
 #endif
 
 u32 osGetCount(void) {
+#ifdef TARGET_NDS
+    return nds_perf_now();
+#else
     static u32 counter;
     return counter++;
+#endif
 }
 
 s32 osAiSetFrequency(u32 freq) {

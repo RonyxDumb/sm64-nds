@@ -35,9 +35,9 @@ struct SnowFlakeVertex gSnowFlakeVertex1 = { -5, 5, 0 };
 struct SnowFlakeVertex gSnowFlakeVertex2 = { -5, -5, 0 };
 struct SnowFlakeVertex gSnowFlakeVertex3 = { 5, 5, 0 };
 
-extern void *tiny_bubble_dl_0B006AB0;
-extern void *tiny_bubble_dl_0B006A50;
-extern void *tiny_bubble_dl_0B006CD8;
+extern const Gfx tiny_bubble_dl_0B006AB0[];
+extern const Gfx tiny_bubble_dl_0B006A50[];
+extern const Gfx tiny_bubble_dl_0B006CD8[];
 
 s32 envfx_init_snow(s32 mode) {
     switch (mode) {
@@ -347,9 +347,9 @@ Gfx *envfx_update_snow(s32 snowMode, Vec3s marioPos, Vec3s camFrom, Vec3s camTo)
     rotate_triangle_vertices((s16 *) &vertex1, (s16 *) &vertex2, (s16 *) &vertex3, pitch, yaw);
 
     if (snowMode == ENVFX_SNOW_NORMAL || snowMode == ENVFX_SNOW_BLIZZARD) {
-        gSPDisplayList(gfx++, &tiny_bubble_dl_0B006A50);
+        gSPDisplayList(gfx++, tiny_bubble_dl_0B006A50);
     } else if (snowMode == ENVFX_SNOW_WATER) {
-        gSPDisplayList(gfx++, &tiny_bubble_dl_0B006CD8);
+        gSPDisplayList(gfx++, tiny_bubble_dl_0B006CD8);
     }
 
     for (i = 0; i < gSnowParticleCount; i += 5) {
@@ -362,7 +362,7 @@ Gfx *envfx_update_snow(s32 snowMode, Vec3s marioPos, Vec3s camFrom, Vec3s camTo)
         gSP1Triangle(gfx++, 12, 13, 14, 0);
     }
 
-    gSPDisplayList(gfx++, &tiny_bubble_dl_0B006AB0) gSPEndDisplayList(gfx++);
+    gSPDisplayList(gfx++, tiny_bubble_dl_0B006AB0) gSPEndDisplayList(gfx++);
 
     return gfxStart;
 }

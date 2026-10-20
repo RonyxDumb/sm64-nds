@@ -6,6 +6,7 @@
 
 #include "nds_renderer.h"
 #include "nds_bottom_ui.h"
+#include "nds_perf.h"
 #include "c_button.h"
 #include "stick.h"
 #include "stick_base_1.h"
@@ -200,7 +201,7 @@ static int glTexImage2DAsync(int target, int empty1, GL_TEXTURE_TYPE_ENUM type, 
 }
 
 static void glTexSync() {
-
+    unsigned perfStart = nds_perf_now();
     for (size_t i = 0; i < glTexCount; i++) {
         const void *texture = glTexQueue[i].texture;
         gl_texture_data *tex = glTexQueue[i].tex;
@@ -222,11 +223,13 @@ static void glTexSync() {
         } while (startBank <= endBank);
 
         dmaCopyWords(0, texture, tex->vramAddr, tex->texSize);
+        nds_perf_count(NDS_COUNT_TEX_BYTES, tex->texSize);
 
         vramRestorePrimaryBanks(vramTemp);
     }
 
     glTexCount = 0;
+    nds_perf_record(NDS_PERF_TEXTURE, perfStart);
 }
 
 void renderer_invalidate_texture_cache(void) {
@@ -250,63 +253,64 @@ void renderer_invalidate_texture_cache(void) {
     bound_texture = -1;
 }
 
-static void load_texture() {
-
-    uint32_t index = ((uint32_t)texture_address >> 5) & 0x3FF;
-    while (texture_map[index].address != texture_address && texture_map[index].address != NULL) {
-        index = (index + 1) & 0x3FF;
-    }
-
-    struct Texture *cur = &texture_map[index];
-
-    if (cur->address != NULL) {
-        if (cur->name) {
-            bind_texture(cur->name);
-            return;
-        }
-
-        glGenTextures(1, &cur->name);
-        bind_texture(cur->name);
-        while (!glTexImage2DAsync(GL_TEXTURE_2D, 0, cur->type, cur->size_x, cur->size_y, 0, TEXGEN_TEXCOORD, cur->address)) {
-            if (bound_texture == texture_map[texture_fifo[texture_fifo_end]].name)
-                bound_texture = -1;
-            glDeleteTextures(1, &texture_map[texture_fifo[texture_fifo_end]].name);
-            texture_map[texture_fifo[texture_fifo_end]].name = 0;
-            texture_fifo_end = (texture_fifo_end + 1) & 0x7FF;
-        }
-        texture_fifo[texture_fifo_start] = index;
-        texture_fifo_start = (texture_fifo_start + 1) & 0x7FF;
-        return;
-    }
-
-    cur->address = texture_address;
-
-    switch (texture_format) {
-        case G_IM_FMT_RGBA: cur->type = GL_RGBA;    break;
-        case G_IM_FMT_IA:   cur->type = GL_RGB8_A5; break;
-
-        default:
-
-            bind_texture(cur->name = no_texture);
-            return;
-    }
-
-    const int width = texture_row_size << (4 - texture_bit_width);
-    const int height = ((texture_size << 1) >> texture_bit_width) / width;
-    for (cur->size_x = 0; (width  - 1) >> (cur->size_x + 3) != 0; cur->size_x++);
-    for (cur->size_y = 0; (height - 1) >> (cur->size_y + 3) != 0; cur->size_y++);
-
+static int allocate_texture(struct Texture *cur, unsigned index) {
+    nds_perf_count(NDS_COUNT_TEX_MISS, 1);
     glGenTextures(1, &cur->name);
     bind_texture(cur->name);
-    while (!glTexImage2DAsync(GL_TEXTURE_2D, 0, cur->type, cur->size_x, cur->size_y, 0, TEXGEN_TEXCOORD, cur->address)) {
-        if (bound_texture == texture_map[texture_fifo[texture_fifo_end]].name)
-            bound_texture = -1;
-        glDeleteTextures(1, &texture_map[texture_fifo[texture_fifo_end]].name);
-        texture_map[texture_fifo[texture_fifo_end]].name = 0;
+    for (unsigned attempts = 0; attempts <= 2048; attempts++) {
+        if (glTexImage2DAsync(GL_TEXTURE_2D, 0, cur->type, cur->size_x, cur->size_y, 0, TEXGEN_TEXCOORD, cur->address)) {
+            texture_fifo[texture_fifo_start] = index;
+            texture_fifo_start = (texture_fifo_start + 1) & 0x7FF;
+            return 1;
+        }
+        /* Pending uploads hold gl_texture_data pointers. Drain them before
+         * glDeleteTextures can free one of those descriptors. */
+        if (glTexCount) glTexSync();
+        unsigned victim = texture_fifo[texture_fifo_end];
         texture_fifo_end = (texture_fifo_end + 1) & 0x7FF;
+        if (victim == index || !texture_map[victim].name || texture_map[victim].name == no_texture) continue;
+        if (bound_texture == texture_map[victim].name) bound_texture = -1;
+        glDeleteTextures(1, &texture_map[victim].name);
+        texture_map[victim].name = 0;
+        nds_perf_count(NDS_COUNT_TEX_EVICT, 1);
     }
-    texture_fifo[texture_fifo_start] = index;
-    texture_fifo_start = (texture_fifo_start + 1) & 0x7FF;
+    glDeleteTextures(1, &cur->name);
+    cur->name = 0;
+    bind_texture(no_texture);
+    return 0;
+}
+
+static void load_texture(void) {
+    unsigned index = ((uint32_t)texture_address >> 5) & 0x3FF;
+    unsigned probes = 0;
+    while (texture_map[index].address != texture_address && texture_map[index].address != NULL) {
+        index = (index + 1) & 0x3FF;
+        if (++probes == 1024) {
+            renderer_invalidate_texture_cache();
+            index = ((uint32_t)texture_address >> 5) & 0x3FF;
+            break;
+        }
+    }
+    struct Texture *cur = &texture_map[index];
+    if (cur->address) {
+        if (!cur->type) { bind_texture(no_texture); return; }
+        if (cur->name) bind_texture(cur->name);
+        else allocate_texture(cur, index);
+        return;
+    }
+    cur->address = texture_address;
+    switch (texture_format) {
+        case G_IM_FMT_RGBA: cur->type = GL_RGBA; break;
+        case G_IM_FMT_IA: cur->type = GL_RGB8_A5; break;
+        default: bind_texture(no_texture); return;
+    }
+    const int width = texture_row_size << (4 - texture_bit_width);
+    if (width <= 0) { cur->type = 0; bind_texture(no_texture); return; }
+    const int height = ((texture_size << 1) >> texture_bit_width) / width;
+    if (height <= 0) { cur->type = 0; bind_texture(no_texture); return; }
+    for (cur->size_x = 0; (width - 1) >> (cur->size_x + 3); cur->size_x++);
+    for (cur->size_y = 0; (height - 1) >> (cur->size_y + 3); cur->size_y++);
+    allocate_texture(cur, index);
 }
 
 static inline void gl_color_tinted(int r, int g, int b) {
@@ -321,10 +325,54 @@ static inline void gl_color_tinted(int r, int g, int b) {
     }
 }
 
+/* All pointers in a triangle batch reference the unchanged 16-slot vertex
+ * buffer. Project each slot once, under the original matrices, then emit
+ * the identical clip coordinates with one stack save per batch. */
+DTCM_BSS static s32 sProjected[16][4];
+ITCM_CODE static void draw_projected(const Vtx_t **v, int count, int tex_ofs, int override_z, int z) {
+    unsigned seen = 0;
+    for (int i = 0; i < count; i++) {
+        unsigned slot = ((uintptr_t)v[i] - (uintptr_t)vertex_buffer) / sizeof(Vtx);
+        if (slot >= 16) return;
+        if (!(seen & (1u << slot))) {
+            PosTest(v[i]->ob[0], v[i]->ob[1], v[i]->ob[2]);
+            sProjected[slot][0] = PosTestXresult();
+            sProjected[slot][1] = PosTestYresult();
+            sProjected[slot][2] = PosTestZresult();
+            sProjected[slot][3] = PosTestWresult();
+            seen |= 1u << slot;
+        }
+    }
+    nds_perf_count(NDS_COUNT_POSTEST, __builtin_popcount(seen));
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    for (int i = 0; i < count; i++) {
+        unsigned slot = ((uintptr_t)v[i] - (uintptr_t)vertex_buffer) / sizeof(Vtx);
+        const s32 *clip = sProjected[slot];
+        if (use_color) gl_color_tinted(v[i]->cn[0], v[i]->cn[1], v[i]->cn[2]);
+        if (use_texture) glTexCoord2t16(((v[i]->tc[0] * texture_scale_s) >> 17) + tex_ofs,
+                                      ((v[i]->tc[1] * texture_scale_t) >> 17) + tex_ofs);
+        const m4x4 vertex = {{
+            clip[0],0,0,0, 0,clip[1],0,0,
+            0,0,override_z ? z : clip[2] - (3 << 4),0,
+            0,0,0,clip[3]
+        }};
+        glLoadMatrix4x4(&vertex);
+        glVertex3v16(1 << 12, 1 << 12, 1 << 12);
+    }
+    glPopMatrix(1);
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix(1);
+}
+
 ITCM_CODE static void draw_vertices(const Vtx_t **v, int count) {
 
     const int alpha = ((other_mode_l & (G_BL_A_MEM << 18)) ? 31 : ((use_env_alpha ? env_color.a : v[0]->cn[3]) >> 3));
     if (alpha == 0) return;
+    nds_perf_count(NDS_COUNT_VERTEX, count);
 
     const uint8_t tex_ofs = ((other_mode_h & (3 << G_MDSFT_TEXTFILT)) == G_TF_POINT) ? 0 : (1 << 4);
 
@@ -365,32 +413,7 @@ ITCM_CODE static void draw_vertices(const Vtx_t **v, int count) {
         }
 
         if ((other_mode_l & ZMODE_DEC) == ZMODE_DEC) {
-            for (int i = 0; i < count; i++) {
-
-                if (use_color) gl_color_tinted(v[i]->cn[0], v[i]->cn[1], v[i]->cn[2]);
-                if (use_texture) glTexCoord2t16(((v[i]->tc[0] * texture_scale_s) >> 17) + tex_ofs, ((v[i]->tc[1] * texture_scale_t) >> 17) + tex_ofs);
-
-                PosTest(v[i]->ob[0], v[i]->ob[1], v[i]->ob[2]);
-
-                glMatrixMode(GL_MODELVIEW);
-                glPushMatrix();
-                glLoadIdentity();
-                glMatrixMode(GL_PROJECTION);
-                glPushMatrix();
-
-                const m4x4 vertex = {{
-                    PosTestXresult(), 0, 0, 0,
-                    0, PosTestYresult(), 0, 0,
-                    0, 0, PosTestZresult() - (3 << 4), 0,
-                    0, 0, 0, PosTestWresult()
-                }};
-                glLoadMatrix4x4(&vertex);
-                glVertex3v16(1 << 12, 1 << 12, 1 << 12);
-
-                glPopMatrix(1);
-                glMatrixMode(GL_MODELVIEW);
-                glPopMatrix(1);
-            }
+            draw_projected(v, count, tex_ofs, 0, 0);
         } else {
 
             if (__builtin_expect((use_color), true)) {
@@ -444,31 +467,7 @@ ITCM_CODE static void draw_vertices(const Vtx_t **v, int count) {
 
         const int hijack_z = ((--z_depth) / 6) << 4;
 
-        for (int i = 0; i < count; i++) {
-
-            if (use_color) gl_color_tinted(v[i]->cn[0], v[i]->cn[1], v[i]->cn[2]);
-            if (use_texture) glTexCoord2t16(((v[i]->tc[0] * texture_scale_s) >> 17) + tex_ofs, ((v[i]->tc[1] * texture_scale_t) >> 17) + tex_ofs);
-
-            PosTest(v[i]->ob[0], v[i]->ob[1], v[i]->ob[2]);
-
-            glPushMatrix();
-            glLoadIdentity();
-            glMatrixMode(GL_PROJECTION);
-            glPushMatrix();
-
-            const m4x4 vertex = {{
-                PosTestXresult(), 0, 0, 0,
-                0, PosTestYresult(), 0, 0,
-                0, 0, hijack_z, 0,
-                0, 0, 0, PosTestWresult()
-            }};
-            glLoadMatrix4x4(&vertex);
-            glVertex3v16(1 << 12, 1 << 12, 1 << 12);
-
-            glPopMatrix(1);
-            glMatrixMode(GL_MODELVIEW);
-            glPopMatrix(1);
-        }
+        draw_projected(v, count, tex_ofs, 1, hijack_z);
 
         glPopMatrix(1);
     }
@@ -989,17 +988,19 @@ ITCM_CODE static bool valid_dl_ptr(const Gfx *cmd) {
 ITCM_CODE static void execute(Gfx* cmd) {
 
     int cmd_budget = 20000;
+    unsigned processed = 0;
 
     if (!valid_dl_ptr(cmd)) {
-        return;
+        goto done;
     }
 
     while (true) {
         if (!valid_dl_ptr(cmd) || --cmd_budget <= 0) {
-            return;
+            goto done;
         }
 
         const uint8_t opcode = cmd->words.w0 >> 24;
+        processed++;
 
         if ((opcode != G_TRI1 && opcode != G_TRI2 && batch_count > 0) || batch_count > BATCH_SIZE - 6) {
             draw_vertices(vertex_batch, batch_count);
@@ -1058,7 +1059,7 @@ ITCM_CODE static void execute(Gfx* cmd) {
                 if (cmd->words.w0 & (1 << 16)) {
                     Gfx *next = (Gfx*) segmented_to_virtual((const void*) cmd->words.w1);
                     if (!valid_dl_ptr(next)) {
-                        return;
+                        goto done;
                     }
                     cmd = next;
                     continue;
@@ -1072,7 +1073,7 @@ ITCM_CODE static void execute(Gfx* cmd) {
 
             case G_ENDDL:
 
-                return;
+                goto done;
 
             default:
 
@@ -1081,14 +1082,17 @@ ITCM_CODE static void execute(Gfx* cmd) {
 
         cmd++;
     }
+done:
+    nds_perf_count(NDS_COUNT_COMMAND, processed);
 }
 
 static void end_frame() {
-
+    unsigned perfStart = nds_perf_now();
     frame_count++;
 
     if (glTexCount > 0) glTexSync();
     oamUpdate(&oamSub);
+    nds_perf_record(NDS_PERF_VBLANK, perfStart);
 }
 
 static uint16_t *bitmap_init_4bpp(const uint32_t *bitmap, int palRow) {
@@ -1279,6 +1283,7 @@ void draw_frame(Gfx *display_list) {
     fog_status = 0;
     tint_active = false;
 
+    unsigned perfStart = nds_perf_now();
     execute(display_list);
     glFlush(GL_TRANS_MANUALSORT);
 
@@ -1321,8 +1326,11 @@ void draw_frame(Gfx *display_list) {
 #ifdef NDS_BOTTOM_UI
     /* Charge bottom-screen work to this frame's existing VBlank budget,
      * while the GPU is drawing, instead of adding it after the wait. */
+    unsigned uiStart = nds_perf_now();
     nds_bottom_ui_present();
+    nds_perf_record(NDS_PERF_UI, uiStart);
 #endif
+    nds_perf_record(NDS_PERF_RENDER, perfStart);
     for (int i = frame_count; i < 2; i++)
         swiWaitForVBlank();
 

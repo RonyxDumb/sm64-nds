@@ -9,11 +9,18 @@ static u16 high_freqs;
 
 static u8 chan_seq[16];
 static u16 chan_inited;
-static u16 calculate_freq(f32 frequency) {
+static f32 sLastFrequency[16];
+static u16 sLastTimer[16];
+static u16 calculate_freq(int channel, f32 frequency) {
+    if (sLastTimer[channel] && sLastFrequency[channel] == frequency)
+        return sLastTimer[channel];
 
     u32 freq = frequency * 32000;
     if (freq > 0xFFFF) freq = 0xFFFF;
-    return SOUND_FREQ((u16)freq);
+    if (freq == 0) freq = 1;
+    sLastFrequency[channel] = frequency;
+    sLastTimer[channel] = SOUND_FREQ((u16)freq);
+    return sLastTimer[channel];
 }
 
 static u32 calculate_vol_pan(const struct Note *note) {
@@ -67,14 +74,14 @@ void play_notes(struct Note *notes) {
                     SCHANNEL_SOURCE(i) = note->ndsSourceHalf;
                     SCHANNEL_REPEAT_POINT(i) = note->ndsRepeatHalf;
                     SCHANNEL_LENGTH(i) = note->ndsLengthHalf;
-                    SCHANNEL_TIMER(i) = calculate_freq(note->frequency / 2);
+                    SCHANNEL_TIMER(i) = calculate_freq(i, note->frequency / 2);
                     high_freqs |= BIT(i);
                 } else {
 
                     SCHANNEL_SOURCE(i) = note->ndsSourceFull;
                     SCHANNEL_REPEAT_POINT(i) = note->ndsRepeatFull;
                     SCHANNEL_LENGTH(i) = note->ndsLengthFull;
-                    SCHANNEL_TIMER(i) = calculate_freq(note->frequency);
+                    SCHANNEL_TIMER(i) = calculate_freq(i, note->frequency);
                     high_freqs &= ~BIT(i);
                 }
 
@@ -84,7 +91,7 @@ void play_notes(struct Note *notes) {
                 chan_inited |= BIT(i);
             } else if (SCHANNEL_CR(i) & SCHANNEL_ENABLE) {
 
-                SCHANNEL_TIMER(i) = calculate_freq(note->frequency / ((high_freqs & BIT(i)) ? 2 : 1));
+                SCHANNEL_TIMER(i) = calculate_freq(i, note->frequency / ((high_freqs & BIT(i)) ? 2 : 1));
                 SCHANNEL_CR(i) = (SCHANNEL_CR(i) & ~(SOUND_VOL(127) | SOUND_PAN(127))) | calculate_vol_pan(note);
             }
         } else {
