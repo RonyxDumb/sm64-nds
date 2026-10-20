@@ -131,3 +131,11 @@ I tempi sono inclusivi: gli interrupt audio possono sovrapporsi alle altre fasi,
 quindi non sommare le colonne delle fasi. I test host si eseguono con
 `python3 tests/nds_perf_regression.py` e richiedono Python 3 e un compilatore C.
 Confermano le invarianti degli helper modificati; non misurano gli FPS del DS.
+
+Il profilo versione 2 separa comandi di livello, costruzione della scena,
+oggetti, collisioni tra oggetti, camera, lettura dei segmenti e sottofasi audio.
+La tabella finale riporta i tempi delle singole fasi per livello/area; per
+ottenere i millisecondi medi dividere `total_ticks` per Timer Hz e per il numero
+di fotogrammi dell'area, quindi moltiplicare per 1000. Le fasi sono annidate: per
+esempio, gli attori sono inclusi negli oggetti. I totali globali possono
+includere l'inizializzazione, mentre la ripartizione per area copre i fotogrammi.

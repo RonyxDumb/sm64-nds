@@ -23,7 +23,7 @@ static u16 calculate_freq(int channel, f32 frequency) {
     return sLastTimer[channel];
 }
 
-static u32 calculate_vol_pan(const struct Note *note) {
+static u32 calculate_vol_pan(const struct NdsAudioNote *note) {
 
     u32 vol = note->targetVolLeft + note->targetVolRight;
     u32 pan;
@@ -41,12 +41,12 @@ static u32 calculate_vol_pan(const struct Note *note) {
     return SOUND_VOL(vol) | SOUND_PAN(pan);
 }
 
-void play_notes(struct Note *notes) {
+void play_notes(struct NdsAudioNote *notes) {
 
     if (notes == NULL) return;
 
     for (int i = 0; i < 16; i++) {
-        struct Note *note = &notes[i];
+        struct NdsAudioNote *note = &notes[i];
 
         /*
          * Spegne SOLO la Note classificata come mutabile dall'ARM9.

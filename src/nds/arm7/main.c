@@ -6,7 +6,7 @@
 #include "nds_audio.h"
 #include "../nds_arm7_copy.h"
 
-struct Note *gNotes;
+struct NdsAudioNote *gNotes;
 static bool running;
 static vu32 wifi_ready;
 
@@ -84,7 +84,7 @@ int main(void) {
     while (!fifoCheckValue32(FIFO_USER_01)) {
         swiWaitForVBlank();
     }
-    gNotes = (struct Note*)fifoGetValue32(FIFO_USER_01);
+    gNotes = (struct NdsAudioNote*)fifoGetValue32(FIFO_USER_01);
 
     REG_IPC_SYNC |= IPC_SYNC_IRQ_ENABLE;
     REG_IF = IRQ_IPC_SYNC;

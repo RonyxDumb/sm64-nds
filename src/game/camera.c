@@ -1,3 +1,4 @@
+#include "nds/nds_perf.h"
 #include <ultra64.h>
 
 #define INCLUDED_FROM_CAMERA_C
@@ -2482,6 +2483,7 @@ void update_lakitu(struct Camera *c) {
 }
 
 void update_camera(struct Camera *c) {
+    NDS_PERF_START(perfCamera);
     UNUSED u8 filler[24];
 
     gCamera = c;
@@ -2666,6 +2668,7 @@ void update_camera(struct Camera *c) {
     update_lakitu(c);
 
     gLakituState.lastFrameAction = sMarioCamState->action;
+    NDS_PERF_END(NDS_PERF_CAMERA, perfCamera);
 }
 
 void reset_camera(struct Camera *c) {

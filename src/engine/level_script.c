@@ -1,3 +1,4 @@
+#include "nds/nds_perf.h"
 #include <ultra64.h>
 #ifdef NO_SEGMENTED_MEMORY
 #include <string.h>
@@ -882,6 +883,7 @@ static void (*LevelScriptJumpTable[])(void) = {
 };
 
 struct LevelCommand *level_script_execute(struct LevelCommand *cmd) {
+    NDS_PERF_START(perfScript);
     sScriptStatus = SCRIPT_RUNNING;
     sCurrentCmd = cmd;
 
@@ -897,11 +899,14 @@ struct LevelCommand *level_script_execute(struct LevelCommand *cmd) {
         LevelScriptJumpTable[sCurrentCmd->type]();
     }
 
+    NDS_PERF_END(NDS_PERF_SCRIPT, perfScript);
+    NDS_PERF_START(perfScene);
     profiler_log_thread5_time(LEVEL_SCRIPT_EXECUTE);
     init_rcp();
     render_game();
     end_master_display_list();
     alloc_display_list(0);
+    NDS_PERF_END(NDS_PERF_SCENE, perfScene);
 
     return sCurrentCmd;
 }

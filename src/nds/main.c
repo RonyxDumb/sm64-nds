@@ -20,6 +20,7 @@
 #include "nds_renderer.h"
 #include "nds_overlay.h"
 #include "nds_perf.h"
+#include "nds_audio_shared.h"
 #include "nds_sample_cache.h"
 #include "nds_arm7_copy.h"
 #include "nds_net.h"
@@ -275,6 +276,24 @@ static void nds_update_note_mute_flags(void) {
     }
 }
 
+static struct NdsAudioNote sAudioNotes[NDS_AUDIO_CHANNELS] __attribute__((aligned(32)));
+
+static void nds_pack_audio_note(struct NdsAudioNote *out, const struct Note *note) {
+    out->ndsSourceFull = note->ndsSourceFull;
+    out->ndsSourceHalf = note->ndsSourceHalf;
+    out->frequency = note->frequency;
+    out->targetVolLeft = note->targetVolLeft;
+    out->targetVolRight = note->targetVolRight;
+    out->ndsRepeatFull = note->ndsRepeatFull;
+    out->ndsLengthFull = note->ndsLengthFull;
+    out->ndsRepeatHalf = note->ndsRepeatHalf;
+    out->ndsLengthHalf = note->ndsLengthHalf;
+    out->enabled = note->enabled;
+    out->ndsMuted = note->ndsMuted;
+    out->ndsLoop = note->ndsLoop;
+    out->ndsSeq = note->ndsSeq;
+}
+
 static void update_audio(void) {
     unsigned perfStart = nds_perf_now();
     gNdsAudioTick++;
@@ -297,12 +316,16 @@ static void update_audio(void) {
          * all'elaborazione delle sequenze.
          */
         if ((audio_step = (audio_step + 1) & 7) == 0) {
+            unsigned t = nds_perf_now();
             update_game_sound();
+            nds_perf_record(NDS_PERF_AUDIO_GAME, t);
             gAudioFrameCount += 2;
             gAudioRandom = ((gAudioRandom + gAudioFrameCount) * gAudioFrameCount);
         }
 
+        unsigned seqStart = nds_perf_now();
         process_sequences(0);
+        nds_perf_record(NDS_PERF_AUDIO_SEQUENCES, seqStart);
         nds_scache_retry_pending();
 
         /* The final pass below classifies newly allocated notes too.
@@ -318,10 +341,19 @@ static void update_audio(void) {
         nds_audio_state = 2;
     }
 
+    unsigned publishStart = nds_perf_now();
     if (gNotes != NULL) {
         nds_update_note_mute_flags();
-        DC_FlushRange(gNotes, 20 * sizeof(struct Note));
+        for (int i = 0; i < NDS_AUDIO_CHANNELS; i++)
+            nds_pack_audio_note(&sAudioNotes[i], &gNotes[i]);
+    } else {
+        memset(sAudioNotes, 0, sizeof(sAudioNotes));
     }
+    /* ARM7 has completed play_notes before requesting this update. Flush
+     * the complete snapshot before replying: it remains immutable until
+     * ARM7 finishes consuming it and sends the next request. */
+    DC_FlushRange(sAudioNotes, sizeof(sAudioNotes));
+    nds_perf_record(NDS_PERF_AUDIO_PUBLISH, publishStart);
 
     IPC_SendSync(0);
     nds_perf_record(NDS_PERF_AUDIO, perfStart);
@@ -1181,7 +1213,8 @@ int main(void) {
     irqSet(IRQ_IPC_SYNC, update_audio);
     irqEnable(IRQ_IPC_SYNC);
 
-    fifoSendValue32(FIFO_USER_01, (u32)gNotes);
+    DC_FlushRange(sAudioNotes, sizeof(sAudioNotes));
+    fifoSendValue32(FIFO_USER_01, (u32)sAudioNotes);
 
 #ifdef ENABLE_FPS
     timerStart(

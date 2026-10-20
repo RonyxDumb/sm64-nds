@@ -586,7 +586,7 @@ void thread5_game_loop(UNUSED void *arg) {
             continue;
         }
 #ifdef TARGET_NDS
-        unsigned ndsFrameStart = nds_perf_now();
+        unsigned ndsFrameStart = nds_perf_begin_frame();
         unsigned ndsLogicStart = ndsFrameStart;
 #endif
         profiler_log_thread5_time(THREAD5_START);

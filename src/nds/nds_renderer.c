@@ -1331,8 +1331,10 @@ void draw_frame(Gfx *display_list) {
     nds_perf_record(NDS_PERF_UI, uiStart);
 #endif
     nds_perf_record(NDS_PERF_RENDER, perfStart);
+    unsigned waitStart = nds_perf_now();
     for (int i = frame_count; i < 2; i++)
         swiWaitForVBlank();
+    nds_perf_record(NDS_PERF_WAIT, waitStart);
 
     frame_count = 0;
 }

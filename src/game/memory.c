@@ -1,3 +1,4 @@
+#include "nds/nds_perf.h"
 #include <PR/ultratypes.h>
 #ifndef TARGET_N64
 #include <string.h>
@@ -292,7 +293,7 @@ static void *dynamic_dma_read(u8 *srcStart, u8 *srcEnd, u32 side) {
 #ifdef TARGET_NDS
 #include <stdio.h>
 
-void *load_segment(s32 segment, u8 *srcStart, u8 *srcEnd, u32 side) {
+static void *load_segment_nds(s32 segment, u8 *srcStart, u8 *srcEnd, u32 side) {
     const char *path = (const char *) srcStart;
     u32 rawSize;
     u32 alignedSize;
@@ -358,6 +359,14 @@ void *load_segment(s32 segment, u8 *srcStart, u8 *srcEnd, u32 side) {
     return dest;
 }
 
+void *load_segment(s32 segment, u8 *srcStart, u8 *srcEnd, u32 side) {
+    NDS_PERF_START(t);
+    void *result = load_segment_nds(segment, srcStart, srcEnd, side);
+    NDS_PERF_END(NDS_PERF_LEVEL_IO, t);
+    return result;
+}
+
+
 void *load_to_fixed_pool_addr(u8 *destAddr, u8 *srcStart, u8 *srcEnd) {
 
     return NULL;
@@ -369,7 +378,7 @@ void *load_segment_decompress(s32 segment, u8 *srcStart, u8 *srcEnd) {
 
 static u8 sNdsTexHeap[0x20800] __attribute__((aligned(8)));
 
-void *load_segment_decompress_heap(u32 segment, u8 *srcStart, u8 *srcEnd) {
+static void *load_segment_decompress_heap_nds(u32 segment, u8 *srcStart, u8 *srcEnd) {
     const char *path = (const char *) srcStart;
     u32 size;
     size_t bytesRead;
@@ -429,6 +438,14 @@ void *load_segment_decompress_heap(u32 segment, u8 *srcStart, u8 *srcEnd) {
 #endif
     return sNdsTexHeap;
 }
+
+void *load_segment_decompress_heap(u32 segment, u8 *srcStart, u8 *srcEnd) {
+    NDS_PERF_START(t);
+    void *result = load_segment_decompress_heap_nds(segment, srcStart, srcEnd);
+    NDS_PERF_END(NDS_PERF_LEVEL_IO, t);
+    return result;
+}
+
 
 void load_engine_code_segment(void) {
 

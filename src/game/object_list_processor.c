@@ -1,3 +1,4 @@
+#include "nds/nds_perf.h"
 #include <PR/ultratypes.h>
 
 #include "sm64.h"
@@ -454,6 +455,7 @@ UNUSED static u16 unused_get_elapsed_time(u64 *cycleCounts, s32 index) {
 }
 
 void update_objects(UNUSED s32 unused) {
+    NDS_PERF_START(perfObjects);
     s64 cycleCounts[30];
 
     cycleCounts[0] = get_current_clock();
@@ -470,21 +472,41 @@ void update_objects(UNUSED s32 unused) {
     gObjectLists = gObjectListArray;
 
     cycleCounts[1] = get_clock_difference(cycleCounts[0]);
-    clear_dynamic_surfaces();
+    {
+        NDS_PERF_START(t);
+        clear_dynamic_surfaces();
+        NDS_PERF_END(NDS_PERF_OBJECT_CLEANUP, t);
+    }
 
     cycleCounts[2] = get_clock_difference(cycleCounts[0]);
-    update_terrain_objects();
+    {
+        NDS_PERF_START(t);
+        update_terrain_objects();
+        NDS_PERF_END(NDS_PERF_TERRAIN, t);
+    }
 
     apply_mario_platform_displacement();
 
     cycleCounts[3] = get_clock_difference(cycleCounts[0]);
-    detect_object_collisions();
+    {
+        NDS_PERF_START(t);
+        detect_object_collisions();
+        NDS_PERF_END(NDS_PERF_COLLISIONS, t);
+    }
 
     cycleCounts[4] = get_clock_difference(cycleCounts[0]);
-    update_non_terrain_objects();
+    {
+        NDS_PERF_START(t);
+        update_non_terrain_objects();
+        NDS_PERF_END(NDS_PERF_ACTORS, t);
+    }
 
     cycleCounts[5] = get_clock_difference(cycleCounts[0]);
-    unload_deactivated_objects();
+    {
+        NDS_PERF_START(t);
+        unload_deactivated_objects();
+        NDS_PERF_END(NDS_PERF_OBJECT_CLEANUP, t);
+    }
 
     cycleCounts[6] = get_clock_difference(cycleCounts[0]);
     update_mario_platform();
@@ -501,4 +523,5 @@ void update_objects(UNUSED s32 unused) {
     }
 
     gPrevFrameObjectCount = gObjectCounter;
+    NDS_PERF_END(NDS_PERF_OBJECTS, perfObjects);
 }
