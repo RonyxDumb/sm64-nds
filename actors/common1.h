@@ -176,6 +176,8 @@ extern const GeoLayout number_geo[];
 extern const Gfx pebble_seg3_dl_0301CB00[];
 
 extern const u8 *const power_meter_health_segments_lut[];
+extern const u8 texture_power_meter_left_side[];
+extern const u8 texture_power_meter_right_side[];
 extern const Gfx dl_power_meter_base[];
 extern const Gfx dl_power_meter_health_segments_begin[];
 extern const Gfx dl_power_meter_health_segments_end[];

@@ -2,20 +2,20 @@
 UNUSED static const u64 power_meter_unused_1 = 0;
 
 #if defined(VERSION_CN)
-ALIGNED8 static const Texture texture_power_meter_left_side[] = {
+ALIGNED8 const Texture texture_power_meter_left_side[] = {
 #include "actors/power_meter/power_meter_left_side_cn.rgba16.inc.c"
 };
 
-ALIGNED8 static const Texture texture_power_meter_right_side[] = {
+ALIGNED8 const Texture texture_power_meter_right_side[] = {
 #include "actors/power_meter/power_meter_right_side_cn.rgba16.inc.c"
 };
 #else
 
-ALIGNED8 static const Texture texture_power_meter_left_side[] = {
+ALIGNED8 const Texture texture_power_meter_left_side[] = {
 #include "actors/power_meter/power_meter_left_side.rgba16.inc.c"
 };
 
-ALIGNED8 static const Texture texture_power_meter_right_side[] = {
+ALIGNED8 const Texture texture_power_meter_right_side[] = {
 #include "actors/power_meter/power_meter_right_side.rgba16.inc.c"
 };
 #endif

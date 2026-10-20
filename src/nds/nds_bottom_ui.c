@@ -8,12 +8,16 @@
 #include "game/level_update.h"
 #include "game/memory.h"
 #include "game/camera.h"
+#include "game/print.h"
+#include "game/hud.h"
+#include "actors/common1.h"
 extern u8 gDialogCharWidths[256];
 #include "game/segment2.h"
 
-/* H is the only background bank: C/D belong to ARM7 audio. 768 unique
- * 4bpp tiles (24 KiB) plus a 2 KiB map fit in its 32 KiB. */
-static u16 sPixels[256 * 192 / 4] __attribute__((aligned(32)));
+/* H + I provide 48 KiB of sub BG VRAM. The map occupies the first
+ * 2 KiB; pack only nonempty 8bpp tiles after it (tile 32 is blank).
+ * C/D remain reserved for ARM7 audio. */
+static u16 sPixels[256 * 192 / 2] __attribute__((aligned(32)));
 static int sBg;
 static const u8 *sText;
 static int sStart, sLines, sChoice, sMore, sCamera;
@@ -23,9 +27,9 @@ void nds_bottom_ui_camera(int status) { sCamera = status; }
 static void pixel(int x, int y, int color) {
     int offset, shift;
     if ((unsigned)x >= 256 || (unsigned)y >= 192) return;
-    offset = ((y >> 3) * 32 + (x >> 3)) * 16 + (y & 7) * 2 + ((x & 7) >> 2);
-    shift = (x & 3) * 4;
-    sPixels[offset] = (sPixels[offset] & ~(15 << shift)) | (color << shift);
+    offset = ((y >> 3) * 32 + (x >> 3)) * 32 + (y & 7) * 4 + ((x & 7) >> 1);
+    shift = (x & 1) * 8;
+    sPixels[offset] = (sPixels[offset] & ~(255 << shift)) | (color << shift);
 }
 
 /* The NDS asset converter expands the US 16x8 IA4 source to A5I3.
@@ -64,22 +68,38 @@ static int ascii(int x, int y, const char *str, int w, int h) {
     return x;
 }
 
-static void number(int x, int y, int value, int w, int h) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", value);
-    ascii(x, y, buf, w, h);
+static void upload_tiles(void) {
+    u16 *vram = bgGetGfxPtr(sBg);
+    u16 *map = bgGetMapPtr(sBg);
+    int next = 33;
+    /* All VRAM writes use halfwords; DS VRAM does not support byte stores. */
+    for (int i = 0; i < 32; i++) vram[32 * 32 + i] = 0;
+    for (int tile = 0; tile < 768; tile++) {
+        const u16 *src = sPixels + tile * 32;
+        int nonempty = 0;
+        for (int j = 0; j < 32; j++) nonempty |= src[j];
+        if (!nonempty || next >= 768) { map[tile] = 32; continue; }
+        for (int j = 0; j < 32; j++) vram[next * 32 + j] = src[j];
+        map[tile] = next++;
+    }
 }
 
 void nds_bottom_ui_init(void) {
     videoSetModeSub(MODE_0_2D);
     vramSetBankH(VRAM_H_SUB_BG);
-    sBg = bgInitSub(0, BgType_Text4bpp, BgSize_T_256x256, 15, 0);
-    for (int i = 0; i < 1024; i++) bgGetMapPtr(sBg)[i] = i < 768 ? i : 0;
+    vramSetBankI(VRAM_I_SUB_BG_0x06208000);
+    sBg = bgInitSub(0, BgType_Text8bpp, BgSize_T_256x256, 0, 0);
+    for (int i = 0; i < 1024; i++) bgGetMapPtr(sBg)[i] = 32;
+    /* Keep the proven dialog's seven gray levels. A 6x6x6 RGB cube
+     * supplies the original HUD artwork with 216 additional colors. */
     for (int i = 0; i < 8; i++) BG_PALETTE_SUB[i] = RGB15(i * 31 / 7, i * 31 / 7, i * 31 / 7);
-    BG_PALETTE_SUB[0] = RGB15(0, 0, 0);
+    for (int red = 0; red < 6; red++)
+        for (int green = 0; green < 6; green++)
+            for (int blue = 0; blue < 6; blue++)
+                BG_PALETTE_SUB[8 + red * 36 + green * 6 + blue] =
+                    RGB15((red * 31 + 2) / 5, (green * 31 + 2) / 5, (blue * 31 + 2) / 5);
     memset(sPixels, 0, sizeof(sPixels));
-    DC_FlushRange(sPixels, sizeof(sPixels));
-    dmaCopy(sPixels, bgGetGfxPtr(sBg), sizeof(sPixels));
+    upload_tiles();
     bgShow(sBg);
 }
 
@@ -92,71 +112,92 @@ void nds_bottom_ui_message(const unsigned char *text, int start, int lines,
     sMore = more;
 }
 
+/* NDS-converted RGBA16 is little endian RGB555 with bit 15 alpha.
+ * HUD icons and digits are upright, unlike the dialog font. */
+static void image(int x, int y, const void *address, int sw, int sh, int w, int h) {
+    const u16 *texture = segmented_to_virtual(address);
+    if (!address || !texture) return;
+    for (int dy = 0; dy < h; dy++)
+        for (int dx = 0; dx < w; dx++) {
+            unsigned c = texture[(dy * sh / h) * sw + dx * sw / w];
+            if (!(c & 0x8000)) continue;
+            int red = ((c & 31) * 5 + 15) / 31;
+            int green = (((c >> 5) & 31) * 5 + 15) / 31;
+            int blue = (((c >> 10) & 31) * 5 + 15) / 31;
+            pixel(x + dx, y + dy, 8 + red * 36 + green * 6 + blue);
+        }
+}
+
+static void hud_char(int x, int y, int c, int size) {
+    void **lut = segmented_to_virtual(main_hud_lut);
+    if (c >= 0 && c < 58 && lut[c]) image(x, y, lut[c], 16, 16, size, size);
+}
+
+static void hud_number(int x, int y, int value, int size, int digits) {
+    char buf[16];
+    if (value < 0) value = 0;
+    if (digits) snprintf(buf, sizeof(buf), "%0*d", digits, value);
+    else snprintf(buf, sizeof(buf), "%d", value);
+    for (int i = 0; buf[i]; i++) hud_char(x + i * size, y, buf[i] - '0', size);
+}
+
+static void counter(int x, int y, int icon, int value, int size) {
+    hud_char(x, y, icon, size);
+    hud_char(x + size, y + size / 4, GLYPH_MULTIPLY, size / 2);
+    hud_number(x + size + size / 2, y + size / 8, value, size * 3 / 4, 0);
+}
+
+static void power_meter(int x, int y, int size) {
+    void **lut = segmented_to_virtual(power_meter_health_segments_lut);
+    image(x, y, texture_power_meter_left_side, 32, 64, size / 2, size);
+    image(x + size / 2, y, texture_power_meter_right_side, 32, 64, size / 2, size);
+    int wedges = gHudDisplay.wedges;
+    if (wedges > 8) wedges = 8;
+    if (wedges > 0) image(x + size / 4, y + size / 4, lut[wedges - 1], 32, 32, size / 2, size / 2);
+}
+
+static void camera(int x, int y) {
+    void **lut = segmented_to_virtual(main_hud_camera_lut);
+    if (sCamera == CAM_STATUS_NONE) return;
+    image(x, y, lut[GLYPH_CAM_CAMERA], 16, 16, 24, 24);
+    int mode = (sCamera & CAM_STATUS_FIXED) ? GLYPH_CAM_FIXED :
+        (sCamera & CAM_STATUS_MARIO) ? GLYPH_CAM_MARIO_HEAD : GLYPH_CAM_LAKITU_HEAD;
+    image(x + 26, y, lut[mode], 16, 16, 24, 24);
+    if (sCamera & CAM_STATUS_C_UP) image(x + 6, y - 12, lut[GLYPH_CAM_ARROW_UP], 8, 8, 12, 12);
+    if (sCamera & CAM_STATUS_C_DOWN) image(x + 6, y + 24, lut[GLYPH_CAM_ARROW_DOWN], 8, 8, 12, 12);
+}
+
 static void hud(void) {
     int flags = gHudDisplay.flags;
     if (!flags) return;
     if (sText) {
-        int x = 4;
-        if (flags & HUD_DISPLAY_FLAG_LIVES) {
-            x = ascii(x, 4, "M ", 10, 20);
-            number(x, 4, gHudDisplay.lives, 10, 20);
-        }
-        if (flags & HUD_DISPLAY_FLAG_COIN_COUNT) {
-            ascii(80, 4, "C ", 10, 20);
-            number(100, 4, gHudDisplay.coins, 10, 20);
-        }
-        if (flags & HUD_DISPLAY_FLAG_STAR_COUNT) {
-            glyph(170, 4, DIALOG_CHAR_STAR_FILLED, 10, 20);
-            number(188, 4, gHudDisplay.stars, 10, 20);
-        }
-        if (flags & HUD_DISPLAY_FLAG_CAMERA_AND_POWER) {
-            for (int i = 0; i < 8; i++)
-                for (int y = 29; y < 33; y++)
-                    for (int px = 4 + i * 8; px < 10 + i * 8; px++)
-                        pixel(px, y, i < gHudDisplay.wedges ? 7 : 2);
-        }
-        if (flags & HUD_DISPLAY_FLAG_KEYS) {
-            ascii(80, 25, "K", 8, 12);
-            number(92, 25, gHudDisplay.keys, 8, 12);
-        }
-        if (flags & HUD_DISPLAY_FLAG_TIMER) {
-            char buf[20];
-            unsigned t = gHudDisplay.timer;
-            snprintf(buf, sizeof(buf), "%u:%02u:%02u", t / 1800, t / 30 % 60, (t % 30) * 100 / 30);
-            ascii(136, 25, buf, 8, 12);
-        }
+        if (flags & HUD_DISPLAY_FLAG_LIVES) counter(2, 4, GLYPH_MARIO_HEAD, gHudDisplay.lives, 16);
+        if (flags & HUD_DISPLAY_FLAG_COIN_COUNT) counter(70, 4, GLYPH_COIN, gHudDisplay.coins, 16);
+        if (flags & HUD_DISPLAY_FLAG_STAR_COUNT) counter(140, 4, GLYPH_STAR, gHudDisplay.stars, 16);
+        if (flags & HUD_DISPLAY_FLAG_CAMERA_AND_POWER) power_meter(216, 0, 36);
         return;
     }
-    if (flags & HUD_DISPLAY_FLAG_LIVES) {
-        ascii(8, 8, "MARIO", 8, 16);
-        number(8, 26, gHudDisplay.lives, 16, 32);
-    }
-    if (flags & HUD_DISPLAY_FLAG_COIN_COUNT) {
-        ascii(136, 8, "COINS", 8, 16);
-        number(136, 26, gHudDisplay.coins, 16, 32);
-    }
-    if (flags & HUD_DISPLAY_FLAG_STAR_COUNT) {
-        ascii(8, 68, "STARS", 8, 16);
-        number(8, 86, gHudDisplay.stars, 16, 32);
-    }
-    if (flags & HUD_DISPLAY_FLAG_KEYS) {
-        ascii(136, 68, "KEYS", 8, 16);
-        number(136, 86, gHudDisplay.keys, 16, 32);
+    if (flags & HUD_DISPLAY_FLAG_LIVES) counter(8, 12, GLYPH_MARIO_HEAD, gHudDisplay.lives, 32);
+    if (flags & HUD_DISPLAY_FLAG_COIN_COUNT) counter(136, 12, GLYPH_COIN, gHudDisplay.coins, 32);
+    if (flags & HUD_DISPLAY_FLAG_STAR_COUNT) counter(8, 60, GLYPH_STAR, gHudDisplay.stars, 32);
+    /* The US HUD has no key bitmap in main_hud_lut. Only show this
+     * otherwise absent counter when keys are actually held. */
+    if ((flags & HUD_DISPLAY_FLAG_KEYS) && gHudDisplay.keys > 0) {
+        ascii(138, 60, "KEYS", 8, 16);
+        hud_number(174, 60, gHudDisplay.keys, 24, 0);
     }
     if (flags & HUD_DISPLAY_FLAG_CAMERA_AND_POWER) {
-        ascii(8, 124, "POWER", 8, 16);
-        ascii(136, 124, (sCamera & CAM_STATUS_FIXED) ? "CAM FIX" :
-            (sCamera & CAM_STATUS_MARIO) ? "CAM M" : "CAM L", 8, 16);
-        for (int i = 0; i < 8; i++)
-            for (int y = 144; y < 156; y++)
-                for (int x = 8 + i * 30; x < 34 + i * 30; x++)
-                    pixel(x, y, i < gHudDisplay.wedges ? 7 : 2);
+        power_meter(16, 96, 80);
+        camera(166, 118);
     }
     if (flags & HUD_DISPLAY_FLAG_TIMER) {
-        char buf[24];
         unsigned t = gHudDisplay.timer;
-        snprintf(buf, sizeof(buf), "TIME %u:%02u:%02u", t / 1800, t / 30 % 60, (t % 30) * 100 / 30);
-        ascii(8, 170, buf, 10, 20);
+        ascii(8, 176, "TIME", 8, 16);
+        hud_number(52, 172, t / 1800, 18, 0);
+        hud_char(72, 172, GLYPH_APOSTROPHE, 18);
+        hud_number(90, 172, t / 30 % 60, 18, 2);
+        hud_char(126, 172, GLYPH_DOUBLE_QUOTE, 18);
+        hud_number(144, 172, t % 30 / 3, 18, 0);
     }
 }
 
@@ -199,8 +240,7 @@ void nds_bottom_ui_present(void) {
     memset(sPixels, 0, sizeof(sPixels));
     hud();
     if (sText) message();
-    DC_FlushRange(sPixels, sizeof(sPixels));
-    dmaCopy(sPixels, bgGetGfxPtr(sBg), sizeof(sPixels));
+    upload_tiles();
     sText = NULL;
 }
 #endif
