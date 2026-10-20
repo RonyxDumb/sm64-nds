@@ -9,6 +9,9 @@
 #include "print.h"
 #include "ingame_menu.h"
 #include "hud.h"
+#ifdef __NDS__
+#include "nds/nds_bottom_ui.h"
+#endif
 #include "segment2.h"
 #include "area.h"
 #include "save_file.h"
@@ -100,6 +103,7 @@ void render_dl_power_meter(s16 numHealthWedges) {
 
 void animate_power_meter_emphasized(void) {
     s16 hudDisplayFlags = gHudDisplay.flags;
+
 
     if (!(hudDisplayFlags & HUD_DISPLAY_FLAG_EMPHASIZE_POWER)) {
         if (sPowerMeterVisibleTimer == 45.0) {
@@ -332,6 +336,15 @@ void render_hud_camera_status(void) {
 
 void render_hud(void) {
     s16 hudDisplayFlags = gHudDisplay.flags;
+#ifdef NDS_BOTTOM_UI
+    nds_bottom_ui_camera(sCameraHUDStatus);
+    if (hudDisplayFlags && gCurrentArea != NULL
+        && gCurrentArea->camera->mode == CAMERA_MODE_INSIDE_CANNON) {
+        create_dl_ortho_matrix();
+        render_hud_cannon_reticle();
+    }
+    return;
+#endif
 
     if (hudDisplayFlags == HUD_DISPLAY_NONE) {
         sPowerMeterHUD.animation = POWER_METER_HIDDEN;

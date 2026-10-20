@@ -5,6 +5,7 @@
 #include <nds/arm9/postest.h>
 
 #include "nds_renderer.h"
+#include "nds_bottom_ui.h"
 #include "c_button.h"
 #include "stick.h"
 #include "stick_base_1.h"
@@ -1184,7 +1185,9 @@ void renderer_init() {
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
 
+#ifndef NDS_BOTTOM_UI
     BG_PALETTE[0x200] = ARGB16(1, 15, 16, 17);
+#endif
     oamInit(&oamSub, SpriteMapping_1D_64, false);
     oamClear(&oamSub, 0, 0);
 
@@ -1209,6 +1212,9 @@ void renderer_init() {
     irqSet(IRQ_VBLANK, end_frame);
     irqEnable(IRQ_VBLANK);
 
+#ifdef NDS_BOTTOM_UI
+    nds_bottom_ui_init();
+#else
     uint16_t *c_gfx = bitmap_init_4bpp(c_buttonBitmap, 0);
     palette_make_pressed(0, 1);
     uint16_t *stick = bitmap_init_4bpp(stickBitmap, 2);
@@ -1263,6 +1269,7 @@ void renderer_init() {
     sprites[STICK_BASE_4].x = 128;
     sprites[STICK_BASE_4].y = 96;
     sprites[STICK_BASE_4].vflip = true;
+#endif
 }
 
 void draw_frame(Gfx *display_list) {
@@ -1304,13 +1311,18 @@ void draw_frame(Gfx *display_list) {
         glDisable(GL_FOG);
     }
 
+#ifndef NDS_BOTTOM_UI
     for (int i = 0; i < MAX_SPRITES; i++)
         oamSet(&oamSub, i, sprites[i].x, sprites[i].y, 1, sprites[i].pressed
             ? sprites[i].pal_press : sprites[i].pal_release, SpriteSize_64x64, SpriteColorFormat_16Color,
             sprites[i].gfx, -1, false, false, sprites[i].vflip, false, false);
 
+#endif
     for (int i = frame_count; i < 2; i++)
         swiWaitForVBlank();
 
+#ifdef NDS_BOTTOM_UI
+    nds_bottom_ui_present();
+#endif
     frame_count = 0;
 }

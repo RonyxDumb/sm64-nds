@@ -2,6 +2,7 @@
 
 #include "nds_include.h"
 #include "nds_renderer.h"
+#include "nds_bottom_ui.h"
 #include "engine/math_util.h"
 #include "lib/src/osContInternal.h"
 #include "nds_net.h"
@@ -51,6 +52,7 @@ void osContGetReadData(OSContPad *pad) {
         touchPosition pos;
         touchRead(&pos);
 
+#ifndef NDS_BOTTOM_UI
         if (sprites[STICK].pressed || (pos.px > 64 && pos.px < 192 && pos.py > 32 && pos.py < 160)) {
 
             int x = pos.px - 128;
@@ -69,7 +71,9 @@ void osContGetReadData(OSContPad *pad) {
             sprites[STICK].x = x + 96;
             sprites[STICK].y = y + 64;
             sprites[STICK].pressed = true;
-        } else if (pos.px < 64 && pos.py > 128) {
+        } else
+#endif
+        if (pos.px < 64 && pos.py > 128) {
 
             pad->button |= L_CBUTTONS;
             sprites[C_LEFT].pressed = true;

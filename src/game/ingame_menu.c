@@ -22,6 +22,9 @@
 #include "sm64.h"
 #include "text_strings.h"
 #include "types.h"
+#ifdef __NDS__
+#include "nds/nds_bottom_ui.h"
+#endif
 
 #ifdef VERSION_EU
 #undef LANGUAGE_FUNCTION
@@ -2057,6 +2060,9 @@ void render_dialog_entries(void) {
             break;
     }
 
+#ifdef NDS_BOTTOM_UI
+    Gfx *topDialogStart = gDisplayListHead;
+#endif
     render_dialog_box_type(dialog, dialog->linesPerBox);
 
 #ifdef VERSION_CN
@@ -2123,6 +2129,15 @@ void render_dialog_entries(void) {
     if (gNextDialogPageStartStrIndex != -1 && gMenuState == MENU_STATE_DIALOG_OPEN) {
         render_dialog_triangle_next(dialog->linesPerBox);
     }
+#ifdef NDS_BOTTOM_UI
+    gDisplayListHead = topDialogStart;
+    if (gDialogID != DIALOG_NONE) {
+        nds_bottom_ui_message(segmented_to_virtual(dialog->str),
+            gDialogPageStartStrIndex, dialog->linesPerBox,
+            gNextDialogPageStartStrIndex == -1 && gDialogWithChoice ? gMenuLineNum : 0,
+            gNextDialogPageStartStrIndex != -1);
+    }
+#endif
 }
 
 void set_menu_mode(s16 mode) {
@@ -2216,6 +2231,9 @@ void do_cutscene_handler(void) {
         return;
     }
 
+#ifdef NDS_BOTTOM_UI
+    Gfx *topSubtitleStart = gDisplayListHead;
+#endif
     create_dl_ortho_matrix();
 
     gSPDisplayList(gDisplayListHead++, dl_ia_text_begin);
@@ -2244,6 +2262,10 @@ void do_cutscene_handler(void) {
 
     gSPDisplayList(gDisplayListHead++, dl_ia_text_end);
 
+#ifdef NDS_BOTTOM_UI
+    gDisplayListHead = topSubtitleStart;
+    nds_bottom_ui_message(gEndCutsceneStringsEn[gCutsceneMsgIndex], 0, 8, 0, -1);
+#endif
     if (gCutsceneMsgTimer < 5) {
         gCutsceneMsgFade += 50;
     }
@@ -2300,6 +2322,9 @@ void print_peach_letter_message(void) {
     dialog = segmented_to_virtual(dialogTable[gDialogID]);
     str = segmented_to_virtual(dialog->str);
 
+#ifdef NDS_BOTTOM_UI
+    Gfx *topLetterStart = gDisplayListHead;
+#endif
     create_dl_translation_matrix(MENU_MTX_PUSH, 97.0f, 118.0f, 0);
 
     gDPSetEnvColor(gDisplayListHead++, 255, 255, 255, gCutsceneMsgFade);
@@ -2319,6 +2344,10 @@ void print_peach_letter_message(void) {
     gSPDisplayList(gDisplayListHead++, castle_grounds_seg7_us_dl_0700F2E8);
 #endif
 
+#ifdef NDS_BOTTOM_UI
+    gDisplayListHead = topLetterStart;
+    nds_bottom_ui_message(str, 0, 8, 0, -1);
+#endif
     if (gCutsceneMsgTimer == 0) {
         gCutsceneMsgFade = 0;
     }
