@@ -279,6 +279,10 @@ static void nds_update_note_mute_flags(void) {
 static struct NdsAudioNote sAudioNotes[NDS_AUDIO_CHANNELS] __attribute__((aligned(32)));
 
 static void nds_pack_audio_note(struct NdsAudioNote *out, const struct Note *note) {
+    out->enabled = note->enabled;
+    out->ndsMuted = note->ndsMuted;
+    /* ARM7 reads only these two flags for disabled/muted channels. */
+    if (!out->enabled || out->ndsMuted) return;
     out->ndsSourceFull = note->ndsSourceFull;
     out->ndsSourceHalf = note->ndsSourceHalf;
     out->frequency = note->frequency;
@@ -288,8 +292,6 @@ static void nds_pack_audio_note(struct NdsAudioNote *out, const struct Note *not
     out->ndsLengthFull = note->ndsLengthFull;
     out->ndsRepeatHalf = note->ndsRepeatHalf;
     out->ndsLengthHalf = note->ndsLengthHalf;
-    out->enabled = note->enabled;
-    out->ndsMuted = note->ndsMuted;
     out->ndsLoop = note->ndsLoop;
     out->ndsSeq = note->ndsSeq;
 }

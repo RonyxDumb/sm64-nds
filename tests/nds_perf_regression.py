@@ -21,8 +21,8 @@ def run(name, source):
         path = Path(directory) / 'test.c'
         path.write_text(source)
         subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra',
-                        '-Wno-pointer-to-int-cast', '-fsanitize=undefined',
-                        str(path), '-o', str(path.with_suffix(''))], check=True)
+                        '-Wno-pointer-to-int-cast', '-fsanitize=undefined', '-fno-sanitize-recover=all',
+                        str(path), '-lm', '-o', str(path.with_suffix(''))], check=True)
         subprocess.run([str(path.with_suffix(''))], check=True)
     print(name + ': PASS')
 
@@ -278,6 +278,148 @@ int main(void){
  assert(strstr(buf,"level,area,phase,total_ticks\n"));
  assert(strstr(buf,"24,1,actors_inclusive,20\n"));
  assert(strstr(buf,"24,2,scene_build_inclusive,32\n"));
+ return 0;
+}
+''')
+
+run('Fixed 16.16 float conversion bit equivalence', r'''
+#include <stdint.h>
+#include <string.h>
+#include <assert.h>
+#include <limits.h>
+typedef int32_t s32;typedef uint32_t u32;typedef float f32;
+#define NDS_ARM_CODE
+''' + function('src/engine/math_util.c', 'nds_fixed16_to_float') + r'''
+static void check(u32 word){
+ s32 n;memcpy(&n,&word,4);
+ volatile float integer=(float)n;
+ float expected=integer*(1.0f/65536.0f),actual=nds_fixed16_to_float(n);
+ u32 a,b;memcpy(&a,&actual,4);memcpy(&b,&expected,4);assert(a==b);
+}
+int main(void){
+ check(0);check(INT_MIN);check(INT_MAX);check(0xffffffffu);
+ for(unsigned bit=0;bit<32;bit++)for(unsigned d=0;d<4096;d++){
+  u32 n=(1u<<bit)+d;check(n);check(0u-n);
+  n=(1u<<bit)-d;check(n);check(0u-n);
+ }
+ u32 state=0x829ab331u;
+ for(unsigned i=0;i<2000000;i++){
+  state^=state<<13;state^=state>>17;state^=state<<5;check(state);
+ }
+ return 0;
+}
+''')
+
+surface = (ROOT / 'src/engine/surface_load.c').read_text()
+start = surface.index('static struct Surface *read_object_surface_data(')
+end = surface.index('\n#else', start)
+run('Dynamic surface cache geometry and invalidation', r'''
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+#include <math.h>
+typedef int32_t s32;typedef uint32_t u32;typedef int16_t s16;
+typedef uint16_t u16;typedef uint8_t u8;typedef int8_t s8;
+typedef float f32;typedef s16 TerrainData;
+struct Object {int unused;};
+struct Surface {
+ TerrainData type,force;s8 flags,room;TerrainData lowerY,upperY;
+ TerrainData vertex1[3],vertex2[3],vertex3[3];
+ struct {f32 x,y,z;} normal;f32 originOffset;struct Object*object;
+};
+#define TARGET_NDS 1
+#define ARM9 1
+static u32 sNdsSurfaceGeometryValid[72];
+#define SURF_WARN_POOL 1
+#define SURF_WARN_BAD_INDEX 4
+#define DBG(...)
+#define NDS_COUNT_SURFACE_HIT 0
+#define NDS_COUNT_SURFACE_MISS 1
+static struct Surface pool[2],*sSurfacePool=pool;
+static int gSurfacesAllocated,sSurfacePoolSize=2,sTerrainNumVertices=32;
+static u8 sSurfaceLoadWarnFlags;
+static unsigned counters[2];
+static void nds_perf_count(int n,unsigned v){counters[n]+=v;}
+''' + function('src/engine/surface_load.c', 'alloc_surface')
+    + function('src/engine/surface_load.c', 'read_surface_data')
+    + '\n' + surface[start:end] + r'''
+static struct Surface plain(TerrainData*v,TerrainData**i,int*valid){
+ struct Surface saved[2];u32 validBits[72];
+ memcpy(saved,pool,sizeof(pool));memcpy(validBits,sNdsSurfaceGeometryValid,sizeof(validBits));
+ memset(pool,0,sizeof(pool));gSurfacesAllocated=0;
+ struct Surface*p=read_surface_data(v,i);*valid=(p!=0);
+ struct Surface result=p?*p:(struct Surface){0};
+ memcpy(pool,saved,sizeof(pool));memcpy(sNdsSurfaceGeometryValid,validBits,sizeof(validBits));
+ return result;
+}
+static void check(TerrainData*v,TerrainData**i){
+ int valid;struct Surface expected=plain(v,i,&valid);
+ gSurfacesAllocated=0;
+ struct Surface*p=read_object_surface_data(v,i);assert((p!=0)==valid);
+ if(p){assert(!memcmp(p,&expected,sizeof(expected)));
+  /* A caller's per-object metadata must never leak into the cache. */
+  p->object=(struct Object*)(uintptr_t)0x1234;p->type=100;p->flags=15;p->room=5;p->force=12;
+ }
+}
+int main(void){
+ TerrainData vertices[96],indices[3]={0,1,2};TerrainData*i=indices;
+ for(int trial=0;trial<10000;trial++){
+  for(int k=0;k<96;k++)vertices[k]=(rand()%4001)-2000;
+  check(vertices,&i);unsigned before=counters[NDS_COUNT_SURFACE_HIT];
+  check(vertices,&i);assert(counters[NDS_COUNT_SURFACE_HIT]==before+1);
+  for(int k=0;k<9;k++){vertices[k]++;check(vertices,&i);check(vertices,&i);}
+  indices[0]=3;indices[1]=4;indices[2]=5;check(vertices,&i);check(vertices,&i);
+  indices[0]=0;indices[1]=1;indices[2]=2;
+ }
+ memset(vertices,0,sizeof(vertices));check(vertices,&i);check(vertices,&i);
+ indices[0]=-1;check(vertices,&i);indices[0]=32;check(vertices,&i);indices[0]=0;
+ vertices[0]=0;vertices[1]=0;vertices[2]=0;vertices[3]=100;vertices[4]=0;vertices[5]=0;vertices[6]=0;vertices[7]=100;vertices[8]=0;
+ check(vertices,&i);gSurfacesAllocated=sSurfacePoolSize;assert(!read_object_surface_data(vertices,&i));
+ assert(counters[NDS_COUNT_SURFACE_HIT]&&counters[NDS_COUNT_SURFACE_MISS]);
+ return 0;
+}
+''')
+
+run('Deferred matrix float export and scaling', r'''
+#include <stdint.h>
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+typedef int32_t s32;typedef uint32_t u32;typedef int16_t s16;typedef uint16_t u16;
+typedef int64_t s64;typedef float f32;typedef f32 Mat4[4][4];typedef f32 Vec3f[3];
+typedef struct {s32 m[4][4];} Mtx;
+#define NDS_ARM_CODE
+#define NDS_ITCM_CODE
+#define FIXED_MUL16(x,y) ((s32)((((s64)(x)*(y))+0x8000)>>16))
+''' + '\n'.join(function('src/engine/math_util.c', n) for n in
+    ['nds_fixed16_to_float', 'mtx_get_fixed', 'mtxf_mul_fixed_raw', 'mtxf_scale_fixed']) + r'''
+int main(void){
+ for(int trial=0;trial<20000;trial++){
+  s32 input[4][4],b[4][4],actual[4][4],expected[4][4];Mat4 floats,mirror;Mtx packed;
+  for(int i=0;i<4;i++)for(int j=0;j<4;j++){
+   input[i][j]=(rand()%262145)-131072;b[i][j]=(rand()%262145)-131072;
+  }
+  for(int i=0;i<4;i++){
+   input[i][3]=b[i][3]=i==3?65536:0;
+   for(int j=0;j<2;j++){
+    u32 first=(u32)b[i][j*2],second=(u32)b[i][j*2+1];
+    packed.m[i/2][(i%2)*2+j]=(s32)((first&0xffff0000u)|(second>>16));
+    packed.m[2+i/2][(i%2)*2+j]=(s32)((first<<16)|(second&65535));
+   }
+  }
+  mtxf_mul_fixed_raw(expected,mirror,input,&packed);
+  memset(floats,0x35,sizeof(floats));mtxf_mul_fixed_raw(actual,NULL,input,&packed);
+  assert(!memcmp(actual,expected,sizeof(actual)));
+  Vec3f scale={(trial%7-3)/2.0f,(trial%5-2)/2.0f,(trial%11-5)/2.0f};
+  mtxf_scale_fixed(actual,floats,scale);
+  for(int i=0;i<4;i++)for(int j=0;j<4;j++){
+   s32 want=expected[i][j];
+   if(i<3)want=(s32)((((s64)want*(s32)(scale[i]*65536.0f))+0x8000)>>16);
+   volatile f32 converted=(f32)want;f32 wantFloat=converted*(1.0f/65536.0f);
+   assert(actual[i][j]==want);assert(!memcmp(&floats[i][j],&wantFloat,4));
+  }
+ }
  return 0;
 }
 ''')

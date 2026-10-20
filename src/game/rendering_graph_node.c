@@ -3,9 +3,11 @@
 #if defined(TARGET_NDS) && defined(ARM9)
 #define NDS_ITCM_CODE __attribute__((section(".itcm")))
 #define NDS_DTCM_BSS  __attribute__((section(".sbss")))
+#define NDS_NOINLINE __attribute__((noinline))
 #else
 #define NDS_ITCM_CODE
 #define NDS_DTCM_BSS
+#define NDS_NOINLINE
 #endif
 
 #include "area.h"
@@ -431,7 +433,7 @@ static void geo_process_generated_list(struct GraphNodeGenerated *node) {
     }
 }
 
-static void geo_process_background(struct GraphNodeBackground *node) {
+NDS_NOINLINE static void geo_process_background(struct GraphNodeBackground *node) {
     Gfx *list = NULL;
 
     if (node->fnNode.func != NULL) {
@@ -552,7 +554,8 @@ void geo_set_animation_globals(struct AnimInfo *node, s32 hasAnimation) {
     }
 }
 
-static void geo_process_shadow(struct GraphNodeShadow *node) {
+/* Keep these large handlers out of the ITCM traversal body. */
+NDS_NOINLINE static void geo_process_shadow(struct GraphNodeShadow *node) {
     Gfx *shadowList;
     Mat4 mtxf;
     Vec3f shadowPos;
@@ -701,7 +704,8 @@ static void geo_process_object(struct Object *node) {
             s32 localFixed[4][4];
             mtxf_rotate_zxy_and_translate_fixed(localFixed, node->header.gfx.pos,
                                                 node->header.gfx.angle);
-            mtxf_mul_fixed_raw(objFixed, gMatStack[gMatStackIndex + 1], localFixed,
+            /* Scaling immediately exports the complete float matrix. */
+            mtxf_mul_fixed_raw(objFixed, NULL, localFixed,
                                gMatStackFixed[gMatStackIndex]);
             useFixed = TRUE;
         }

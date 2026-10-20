@@ -49,6 +49,7 @@ void mtxf_mul_fixed_to_fixed(Mtx *dest, Mat4 floatDest, s32 aFixed[4][4], const 
 void mtxf_rotate_zxy_and_translate_fixed(s32 dest[4][4], Vec3f translate, Vec3s rotate);
 void mtxf_rotate_xyz_and_translate_fixed(s32 dest[4][4], Vec3f translate, Vec3s rotate);
 void mtxf_pack(Mtx *dest, s32 src[4][4]);
+/* floatDest may be NULL when the next operation exports the float mirror. */
 void mtxf_mul_fixed_raw(s32 destFixed[4][4], Mat4 floatDest, s32 aFixed[4][4], const Mtx *bPacked);
 void mtxf_scale_fixed(s32 mtx[4][4], Mat4 floatDest, Vec3f s);
 void mtxf_scale_vec3f(Mat4 dest, Mat4 mtx, Vec3f s);

@@ -21,6 +21,8 @@ extern void nds_debug_printf(const char *fmt, ...);
 #include "surface_load.h"
 #ifdef TARGET_NDS
 #include <stdlib.h>
+#include <string.h>
+#include "nds/nds_perf.h"
 #endif
 
 s32 unused8038BE90;
@@ -36,6 +38,7 @@ struct Surface *sSurfacePool;
 #define NDS_SURFACE_POOL_SIZE 2300
 #define NDS_SURFACE_NODE_POOL_SIZE 7000
 static struct Surface *sNdsSurfacePoolHeap = NULL;
+static u32 sNdsSurfaceGeometryValid[(NDS_SURFACE_POOL_SIZE + 31) / 32];
 static struct SurfaceNode *sNdsSurfaceNodePoolHeap = NULL;
 #endif
 
@@ -349,9 +352,42 @@ static struct Surface *read_surface_data(TerrainData *vertexData, TerrainData **
 
     surface->lowerY = minY - 5;
     surface->upperY = maxY + 5;
-
+#if defined(TARGET_NDS) && defined(ARM9)
+    unsigned slot = surface - sSurfacePool;
+    sNdsSurfaceGeometryValid[slot >> 5] |= 1u << (slot & 31);
+#endif
     return surface;
 }
+
+#if defined(TARGET_NDS) && defined(ARM9)
+/* Reuse geometry already present in the next pool slot. Only 288 bytes of
+ * validity bits are needed: no duplicate surfaces or object pointers. All
+ * nine world-space coordinates must match, including on moving platforms.
+ * alloc_surface resets metadata; insertion order and simulation are unchanged. */
+static struct Surface *read_object_surface_data(TerrainData *vertexData, TerrainData **vertexIndices) {
+    const TerrainData *indices = *vertexIndices;
+    if (!vertexData || indices[0] < 0 || indices[1] < 0 || indices[2] < 0
+        || indices[0] >= sTerrainNumVertices || indices[1] >= sTerrainNumVertices
+        || indices[2] >= sTerrainNumVertices) {
+        return read_surface_data(vertexData, vertexIndices);
+    }
+    unsigned slot = gSurfacesAllocated;
+    if (sSurfacePool && slot < (unsigned)sSurfacePoolSize
+        && (sNdsSurfaceGeometryValid[slot >> 5] & (1u << (slot & 31)))) {
+        const struct Surface *previous = &sSurfacePool[slot];
+        if (!memcmp(previous->vertex1, vertexData + 3 * indices[0], sizeof(previous->vertex1))
+            && !memcmp(previous->vertex2, vertexData + 3 * indices[1], sizeof(previous->vertex2))
+            && !memcmp(previous->vertex3, vertexData + 3 * indices[2], sizeof(previous->vertex3))) {
+            nds_perf_count(NDS_COUNT_SURFACE_HIT, 1);
+            return alloc_surface();
+        }
+    }
+    nds_perf_count(NDS_COUNT_SURFACE_MISS, 1);
+    return read_surface_data(vertexData, vertexIndices);
+}
+#else
+#define read_object_surface_data read_surface_data
+#endif
 
 static s32 surface_has_force(TerrainData surfaceType) {
     s32 hasForce = FALSE;
@@ -476,6 +512,7 @@ static void load_environmental_regions(TerrainData **data) {
 
 void alloc_surface_pools(void) {
 #ifdef TARGET_NDS
+    memset(sNdsSurfaceGeometryValid, 0, sizeof(sNdsSurfaceGeometryValid));
     if (sNdsSurfacePoolHeap == NULL || sNdsSurfaceNodePoolHeap == NULL) {
         sNdsSurfaceNodePoolHeap = malloc((u32) NDS_SURFACE_NODE_POOL_SIZE * sizeof(struct SurfaceNode));
         sNdsSurfacePoolHeap = malloc((u32) NDS_SURFACE_POOL_SIZE * sizeof(struct Surface));
@@ -759,7 +796,7 @@ void load_object_surfaces(TerrainData **data, TerrainData *vertexData) {
     }
 
     for (i = 0; i < numSurfaces; i++) {
-        struct Surface *surface = read_surface_data(vertexData, data);
+        struct Surface *surface = read_object_surface_data(vertexData, data);
 
         if (surface != NULL) {
             surface->object = gCurrentObject;

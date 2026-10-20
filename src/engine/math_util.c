@@ -9,8 +9,10 @@
 
 #ifdef TARGET_NDS
 #define NDS_ITCM_CODE __attribute__((section(".itcm")))
+#define NDS_ARM_CODE __attribute__((target("arm")))
 #else
 #define NDS_ITCM_CODE
+#define NDS_ARM_CODE
 #endif
 
 Vec4s *gSplineKeyframe;
@@ -457,6 +459,36 @@ NDS_ITCM_CODE void mtxf_mul(Mat4 dest, Mat4 a, Mat4 b) {
     mtxf_copy(dest, temp);
 }
 
+/* Exact IEEE-754 round-to-nearest conversion of signed 16.16 to float.
+ * Scaling an int32 float by 2^-16 is exact; construct that result directly
+ * instead of calling both software int-to-float and float multiplication. */
+NDS_ARM_CODE __attribute__((noinline)) static f32 nds_fixed16_to_float(s32 value) {
+    if (!value) return 0.0f;
+    u32 sign = value < 0 ? 0x80000000u : 0;
+    u32 magnitude = value < 0 ? 0u - (u32)value : (u32)value;
+    unsigned top = 31u - __builtin_clz(magnitude);
+    u32 exponent = top + 111u;
+    u32 significand;
+    if (top <= 23) {
+        significand = magnitude << (23 - top);
+    } else {
+        unsigned shift = top - 23;
+        u32 remainder = magnitude & ((1u << shift) - 1u);
+        u32 halfway = 1u << (shift - 1);
+        significand = magnitude >> shift;
+        if (remainder > halfway || (remainder == halfway && (significand & 1u))) {
+            significand++;
+            if (significand == 0x1000000u) {
+                significand >>= 1;
+                exponent++;
+            }
+        }
+    }
+    union { u32 bits; f32 value; } result;
+    result.bits = sign | (exponent << 23) | (significand & 0x7fffffu);
+    return result.value;
+}
+
 NDS_ITCM_CODE void mtxf_mul_to_fixed(Mtx *dest, Mat4 floatDest, Mat4 a, Mat4 b) {
     s32 af[4][3];
     s32 bf[4][3];
@@ -498,7 +530,7 @@ NDS_ITCM_CODE void mtxf_mul_to_fixed(Mtx *dest, Mat4 floatDest, Mat4 a, Mat4 b) 
 
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
-            floatDest[i][j] = fx[i][j] * (1.0f / 65536.0f);
+            floatDest[i][j] = nds_fixed16_to_float(fx[i][j]);
         }
     }
 }
@@ -519,7 +551,7 @@ static inline s32 mtx_get_fixed(const Mtx *m, s32 r, s32 j) {
         ih = (s16) (iw >> 16);
         fh = (u16) (fw >> 16);
     }
-    return ((s32) ih << 16) | fh;
+    return (s32)(((u32)(s32)ih << 16) | fh);
 }
 
 NDS_ITCM_CODE void mtxf_mul_fixed_to_fixed(Mtx *dest, Mat4 floatDest, s32 aFixed[4][4], const Mtx *bPacked) {
@@ -540,7 +572,7 @@ NDS_ITCM_CODE void mtxf_mul_fixed_to_fixed(Mtx *dest, Mat4 floatDest, s32 aFixed
                     + (s64) aFixed[i][1] * b[1][j]
                     + (s64) aFixed[i][2] * b[2][j];
             if (i == 3) {
-                acc += (s64) b[3][j] << 16;
+                acc += (s64) b[3][j] * 65536;
             }
             fx[i][j] = (s32) ((acc + 0x8000) >> 16);
         }
@@ -561,7 +593,7 @@ NDS_ITCM_CODE void mtxf_mul_fixed_to_fixed(Mtx *dest, Mat4 floatDest, s32 aFixed
 
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
-            floatDest[i][j] = fx[i][j] * (1.0f / 65536.0f);
+            floatDest[i][j] = nds_fixed16_to_float(fx[i][j]);
         }
     }
 }
@@ -652,7 +684,7 @@ NDS_ITCM_CODE void mtxf_mul_fixed_raw(s32 destFixed[4][4], Mat4 floatDest, s32 a
                     + (s64) aFixed[i][1] * b[1][j]
                     + (s64) aFixed[i][2] * b[2][j];
             if (i == 3) {
-                acc += (s64) b[3][j] << 16;
+                acc += (s64) b[3][j] * 65536;
             }
             destFixed[i][j] = (s32) ((acc + 0x8000) >> 16);
         }
@@ -660,9 +692,11 @@ NDS_ITCM_CODE void mtxf_mul_fixed_raw(s32 destFixed[4][4], Mat4 floatDest, s32 a
     }
     destFixed[3][3] = 1 << 16;
 
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
-            floatDest[i][j] = destFixed[i][j] * (1.0f / 65536.0f);
+    if (floatDest != NULL) {
+        for (i = 0; i < 4; i++) {
+            for (j = 0; j < 4; j++) {
+                floatDest[i][j] = nds_fixed16_to_float(destFixed[i][j]);
+            }
         }
     }
 }
@@ -676,10 +710,10 @@ NDS_ITCM_CODE void mtxf_scale_fixed(s32 mtx[4][4], Mat4 floatDest, Vec3f s) {
         mtx[0][i] = FIXED_MUL16(mtx[0][i], sx);
         mtx[1][i] = FIXED_MUL16(mtx[1][i], sy);
         mtx[2][i] = FIXED_MUL16(mtx[2][i], sz);
-        floatDest[0][i] = mtx[0][i] * (1.0f / 65536.0f);
-        floatDest[1][i] = mtx[1][i] * (1.0f / 65536.0f);
-        floatDest[2][i] = mtx[2][i] * (1.0f / 65536.0f);
-        floatDest[3][i] = mtx[3][i] * (1.0f / 65536.0f);
+        floatDest[0][i] = nds_fixed16_to_float(mtx[0][i]);
+        floatDest[1][i] = nds_fixed16_to_float(mtx[1][i]);
+        floatDest[2][i] = nds_fixed16_to_float(mtx[2][i]);
+        floatDest[3][i] = nds_fixed16_to_float(mtx[3][i]);
     }
 }
 
