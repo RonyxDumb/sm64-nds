@@ -28,8 +28,10 @@ static void pixel(int x, int y, int color) {
     sPixels[offset] = (sPixels[offset] & ~(15 << shift)) | (color << shift);
 }
 
-/* US main_font_lut is 8x16 IA4. Render directly at 10x20 (dialog)
- * or 16x32 (HUD numbers), without the top screen's 320->256 reduction. */
+/* The NDS asset converter expands the US 16x8 IA4 source to A5I3.
+ * Its texture axes follow vertex_ia8_char: screen X reverses texture Y,
+ * screen Y reverses texture X. Render the resulting upright 8x16 glyph
+ * at 10x20 (dialog) or 16x32 (HUD). */
 static int glyph(int x, int y, u8 c, int width, int height) {
     const u8 *tex;
     void **lut = segmented_to_virtual(main_font_lut);
@@ -38,9 +40,10 @@ static int glyph(int x, int y, u8 c, int width, int height) {
     tex = segmented_to_virtual(lut[c]);
     for (int dy = 0; dy < height; dy++) {
         for (int dx = 0; dx < width; dx++) {
-            int p = (dy * 16 / height) * 8 + dx * 8 / width;
-            int v = (tex[p >> 1] >> ((p & 1) ? 0 : 4)) & 15;
-            if ((v & 1) && (v >> 1)) pixel(x + dx, y + dy, v >> 1);
+            int tx = 15 - dy * 16 / height;
+            int ty = 7 - dx * 8 / width;
+            int v = tex[ty * 16 + tx];
+            if ((v >> 3) && (v & 7)) pixel(x + dx, y + dy, v & 7);
         }
     }
     return (gDialogCharWidths[c] * width + 7) / 8;
