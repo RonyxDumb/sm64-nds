@@ -42,11 +42,12 @@ static int glyph(int x, int y, u8 c, int width, int height) {
     if (c == DIALOG_CHAR_SPACE) return (5 * width + 7) / 8;
     if (lut[c] == NULL) return width;
     tex = segmented_to_virtual(lut[c]);
+    int rows[width];
+    for (int dx = 0; dx < width; dx++) rows[dx] = (7 - dx * 8 / width) * 16;
     for (int dy = 0; dy < height; dy++) {
+        int tx = 15 - dy * 16 / height;
         for (int dx = 0; dx < width; dx++) {
-            int tx = 15 - dy * 16 / height;
-            int ty = 7 - dx * 8 / width;
-            int v = tex[ty * 16 + tx];
+            int v = tex[rows[dx] + tx];
             if ((v >> 3) && (v & 7)) pixel(x + dx, y + dy, v & 7);
         }
     }
@@ -117,15 +118,21 @@ void nds_bottom_ui_message(const unsigned char *text, int start, int lines,
 static void image(int x, int y, const void *address, int sw, int sh, int w, int h) {
     const u16 *texture = segmented_to_virtual(address);
     if (!address || !texture) return;
-    for (int dy = 0; dy < h; dy++)
+    static const u8 quant[32] = {
+        0,0,0,0,1,1,1,1,1,1,2,2,2,2,2,2,
+        3,3,3,3,3,3,4,4,4,4,4,4,5,5,5,5
+    };
+    int columns[w];
+    for (int dx = 0; dx < w; dx++) columns[dx] = dx * sw / w;
+    for (int dy = 0; dy < h; dy++) {
+        const u16 *row = texture + (dy * sh / h) * sw;
         for (int dx = 0; dx < w; dx++) {
-            unsigned c = texture[(dy * sh / h) * sw + dx * sw / w];
+            unsigned c = row[columns[dx]];
             if (!(c & 0x8000)) continue;
-            int red = ((c & 31) * 5 + 15) / 31;
-            int green = (((c >> 5) & 31) * 5 + 15) / 31;
-            int blue = (((c >> 10) & 31) * 5 + 15) / 31;
-            pixel(x + dx, y + dy, 8 + red * 36 + green * 6 + blue);
+            int color = 8 + quant[c & 31] * 36 + quant[(c >> 5) & 31] * 6 + quant[(c >> 10) & 31];
+            pixel(x + dx, y + dy, color);
         }
+    }
 }
 
 static void hud_char(int x, int y, int c, int size) {
@@ -236,7 +243,45 @@ static void message(void) {
     if (sMore >= 0) ascii(160, 174, sMore ? "A B NEXT" : "A B CLOSE", 8, 16);
 }
 
+/* Reuse sub-engine VRAM between updates. Almost every gameplay frame
+ * has identical HUD contents; camera motion alone must not redraw it. */
+struct BottomUiState {
+    const u8 *text;
+    int start, lines, choice, more, variable, camera;
+    int lives, coins, stars, wedges, keys, flags, timer;
+};
+static struct BottomUiState sPrevious;
+static int sPreviousValid;
+
 void nds_bottom_ui_present(void) {
+    struct BottomUiState state;
+    memset(&state, 0, sizeof(state));
+    state.text = sText;
+    state.flags = gHudDisplay.flags;
+    if (state.flags) {
+        state.lives = gHudDisplay.lives;
+        state.coins = gHudDisplay.coins;
+        state.stars = gHudDisplay.stars;
+        state.wedges = gHudDisplay.wedges;
+        state.keys = gHudDisplay.keys;
+        state.camera = sCamera;
+        /* The original timer displays tenths, not individual frames. */
+        if ((state.flags & HUD_DISPLAY_FLAG_TIMER) && !sText)
+            state.timer = gHudDisplay.timer / 3;
+    }
+    if (sText) {
+        state.start = sStart;
+        state.lines = sLines;
+        state.choice = sChoice;
+        state.more = sMore;
+        state.variable = gDialogVariable;
+    }
+    if (sPreviousValid && memcmp(&state, &sPrevious, sizeof(state)) == 0) {
+        sText = NULL;
+        return;
+    }
+    sPrevious = state;
+    sPreviousValid = 1;
     memset(sPixels, 0, sizeof(sPixels));
     hud();
     if (sText) message();

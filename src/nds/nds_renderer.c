@@ -1318,11 +1318,13 @@ void draw_frame(Gfx *display_list) {
             sprites[i].gfx, -1, false, false, sprites[i].vflip, false, false);
 
 #endif
+#ifdef NDS_BOTTOM_UI
+    /* Charge bottom-screen work to this frame's existing VBlank budget,
+     * while the GPU is drawing, instead of adding it after the wait. */
+    nds_bottom_ui_present();
+#endif
     for (int i = frame_count; i < 2; i++)
         swiWaitForVBlank();
 
-#ifdef NDS_BOTTOM_UI
-    nds_bottom_ui_present();
-#endif
     frame_count = 0;
 }
