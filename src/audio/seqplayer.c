@@ -6,6 +6,9 @@
 #include "heap.h"
 #include "load.h"
 #include "seqplayer.h"
+#include "nds/nds_bottom_ui.h"
+#include "nds/nds_title_screen.h"
+#include "seq_ids.h"
 
 #define PORTAMENTO_IS_SPECIAL(x) ((x).mode & 0x80)
 #define PORTAMENTO_MODE(x) ((x).mode & ~0x80)
@@ -2326,7 +2329,13 @@ NDS_ITCM_CODE void sequence_player_process_sequence(struct SequencePlayer *seqPl
         return;
     }
 
-    seqPlayer->tempoAcc += seqPlayer->tempo;
+#ifdef NDS_BOTTOM_UI
+    if (gNdsTitleBgm && seqPlayer == &gSequencePlayers[SEQ_PLAYER_LEVEL] &&
+        seqPlayer->seqId == SEQ_EVENT_POWERUP)
+        seqPlayer->tempoAcc += (seqPlayer->tempo * 3 + 2) / 4;
+    else
+#endif
+        seqPlayer->tempoAcc += seqPlayer->tempo;
 #if defined(VERSION_SH) || defined(VERSION_CN)
     seqPlayer->tempoAcc += seqPlayer->tempoAdd;
 #endif

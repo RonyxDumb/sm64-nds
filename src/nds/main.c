@@ -291,6 +291,13 @@ static void nds_pack_audio_note(struct NdsAudioNote *out, const struct Note *not
     out->ndsSourceFull = note->ndsSourceFull;
     out->ndsSourceHalf = note->ndsSourceHalf;
     out->frequency = note->frequency;
+#ifdef NDS_BOTTOM_UI
+    if (gNdsTitleBgm) {
+        struct SequenceChannel *channel = nds_note_get_channel(note);
+        if (channel && channel->seqPlayer == &gSequencePlayers[SEQ_PLAYER_LEVEL])
+            out->frequency *= 0.890898718f; /* two semitones down, music only */
+    }
+#endif
     out->targetVolLeft = note->targetVolLeft;
     out->targetVolRight = note->targetVolRight;
     out->ndsRepeatFull = note->ndsRepeatFull;

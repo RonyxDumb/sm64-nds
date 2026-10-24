@@ -14,7 +14,9 @@ Questa versione include varie modifiche rispetto al port originale:
 
 - menu iniziale con logo 3D e cielo sullo schermo superiore;
 - `START GAME` e `OPTIONS` sul touchscreen, con transizioni animate;
-- opzioni audio e contatore FPS, seguite dal File Select originale;
+- opzioni audio e contatore FPS;
+- avvio classico con logo, testa di Mario Goddard animata e File Select originale;
+- tema Wing Cap nel menu iniziale, al 75% del tempo e due semitoni più basso;
 - correzione del loop audio durante la pausa;
 - ricerca più robusta del percorso della ROM;
 - supporto migliorato per flashcart;
@@ -78,15 +80,26 @@ build/us_nds/sm64.us.nds
 
 Usare la croce direzionale e A, oppure toccare una voce. In `OPTIONS`, A
 alterna ON/OFF, sinistra disattiva e destra attiva; B torna al menu.
-START avvia il gioco dal menu principale. Audio è inizialmente ON e FPS OFF;
+START nel menu principale avvia la sequenza originale: logo, testa di Mario,
+poi un secondo START apre la selezione dei salvataggi.
+Audio è inizialmente ON e FPS OFF;
 le scelte valgono per la sessione. Il contatore appare in basso durante il
 gioco e misura i fotogrammi effettivamente presentati.
+
+Il tema Wing Cap rallentato e abbassato di tono si usa solo nel menu iniziale;
+le schermate successive e il gioco mantengono la loro musica originale.
+Il menu inferiore usa due pagine VRAM, scambiate in VBlank per evitare scie
+durante la navigazione. Il motore Goddard originale viene caricato da NitroFS
+solo durante la sua schermata e liberato al cambio di livello. Le animazioni
+sono compresse senza perdita e lette due fotogrammi alla volta per contenere
+l'uso di RAM del Nintendo DS.
 
 Il test della navigazione e delle transizioni si esegue con:
 
 ```bash
 cc -std=c99 -Isrc tests/nds_title_menu.c src/nds/nds_title_state.c -o /tmp/nds-title-test
 /tmp/nds-title-test
+python3 tests/nds_goddard_anim.py
 ```
 
 ---

@@ -1116,6 +1116,9 @@ done:
 static void end_frame() {
     unsigned perfStart = nds_perf_now();
     frame_count++;
+#ifdef NDS_BOTTOM_UI
+    nds_bottom_ui_vblank();
+#endif
 
     if (glTexCount > 0) glTexSync();
     oamUpdate(&oamSub);

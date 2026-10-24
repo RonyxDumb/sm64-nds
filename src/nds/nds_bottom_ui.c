@@ -23,6 +23,15 @@ static int sBg;
 static const u8 *sText;
 static int sStart, sLines, sChoice, sMore, sCamera;
 static int sPreviousValid, sTitleWasOpen;
+static volatile int sTitlePage, sTitlePendingPage = -1;
+
+void nds_bottom_ui_vblank(void) {
+    if (sTitlePendingPage >= 0) {
+        bgSetMapBase(sBg, sTitlePendingPage);
+        sTitlePage = sTitlePendingPage;
+        sTitlePendingPage = -1;
+    }
+}
 
 void nds_bottom_ui_camera(int status) { sCamera = status; }
 
@@ -88,6 +97,8 @@ static void upload_tiles(void) {
 }
 
 void nds_bottom_ui_init(void) {
+    sTitlePendingPage = -1;
+    sTitlePage = 0;
     videoSetModeSub(MODE_0_2D);
     vramSetBankH(VRAM_H_SUB_BG);
     vramSetBankI(VRAM_I_SUB_BG_0x06208000);
@@ -107,12 +118,14 @@ void nds_bottom_ui_init(void) {
     bgShow(sBg);
 }
 
-/* Title graphics share the HUD buffer and the same 48 KiB of sub VRAM.
- * Deduplicate the repeating gradient tiles so every row remains visible. */
+/* Two maps occupy tiles 0..63. The remaining 704 tiles provide two
+ * disjoint 352-tile pages. Build only the hidden page; publish its map
+ * in VBlank, after both its graphics and indices are complete. */
 static void title_upload(void) {
     s16 hashes[1024];
-    u16 *vram = bgGetGfxPtr(sBg), *map = bgGetMapPtr(sBg);
-    int next = 33;
+    int page = sTitlePage ^ 1;
+    volatile u16 *vram = bgGetGfxPtr(sBg), *map = BG_MAP_RAM_SUB(page);
+    int first = 64 + page * 352, next = first;
     memset(hashes, -1, sizeof(hashes));
     for (int tile = 0; tile < 768; tile++) {
         const u16 *src = sPixels + tile * 32;
@@ -122,12 +135,14 @@ static void title_upload(void) {
         while (hashes[slot] >= 0 && memcmp(src, sPixels + hashes[slot] * 32, 64))
             slot = (slot + 1) & 1023;
         if (hashes[slot] >= 0) map[tile] = map[hashes[slot]];
-        else if (next < 768) {
+        else if (next < first + 352) {
             hashes[slot] = tile;
-            memcpy(vram + next * 32, src, 64);
+            for (int i = 0; i < 32; i++) vram[next * 32 + i] = src[i];
             map[tile] = next++;
-        } else map[tile] = 32;
+        } else map[tile] = first;
     }
+    __asm__ volatile ("" ::: "memory");
+    sTitlePendingPage = page;
 }
 
 static int title_width(const char *text, int width) {
@@ -177,6 +192,7 @@ static void title_cursor(int x, int y) {
 }
 
 static void title_present(void) {
+    if (sTitlePendingPage >= 0) return;
     const struct NdsTitleState *s = &gNdsTitleState;
     static int previous[5];
     int current[5] = { nds_title_slide(s), s->cursorY >> 8, s->audio, s->fps,

@@ -4,6 +4,8 @@
 #include "types.h"
 
 extern const GeoLayout intro_geo_0002D0[];
+extern const GeoLayout intro_geo_nds_title[];
+extern const LevelScript level_intro_nds_title[];
 extern const GeoLayout intro_geo_mario_head_regular[];
 extern const GeoLayout intro_geo_mario_head_dizzy[];
 extern const GeoLayout intro_geo_000414[];

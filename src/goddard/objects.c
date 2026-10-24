@@ -19,6 +19,9 @@
 #include "sfx.h"
 #include "shape_helper.h"
 #include "skin.h"
+#ifdef TARGET_NDS
+#include "nds/nds_goddard_anim.h"
+#endif
 
 struct Unk801B9E68 {
      s32 count;
@@ -1402,6 +1405,10 @@ void interpolate_animation_transform(struct GdAnimTransform *t1, struct GdAnimTr
 
 void move_animator(struct ObjAnimator *animObj) {
     struct AnimDataInfo *animData;
+#ifdef TARGET_NDS
+    struct AnimDataInfo unpacked;
+    s16 frames[18];
+#endif
     Mat4f *mtxArr;
     Mat4f localMtx;
     struct GdAnimTransform *triPtr;
@@ -1463,6 +1470,19 @@ void move_animator(struct ObjAnimator *animObj) {
 
     currKeyFrame--;
     nextKeyFrame--;
+
+#ifdef TARGET_NDS
+    if (animData->type & NDS_GODDARD_ANIM_PACKED) {
+        unsigned int width = nds_goddard_frame(animData->data, MAX(currKeyFrame, 0), frames);
+        nds_goddard_frame(animData->data, MAX(nextKeyFrame, 0), frames + width);
+        unpacked = *animData;
+        unpacked.type &= ~NDS_GODDARD_ANIM_PACKED;
+        unpacked.data = frames;
+        animData = &unpacked;
+        currKeyFrame = 0;
+        nextKeyFrame = 1;
+    }
+#endif
 
     link = animObj->animatedPartsGrp->firstMember;
     while (link != NULL) {

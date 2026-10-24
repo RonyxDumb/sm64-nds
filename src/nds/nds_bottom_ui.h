@@ -7,6 +7,7 @@
 void nds_bottom_ui_init(void);
 void nds_bottom_ui_camera(int status);
 void nds_bottom_ui_present(void);
+void nds_bottom_ui_vblank(void);
 void nds_bottom_ui_message(const unsigned char *text, int start, int lines,
                            int choice, int more);
 #endif

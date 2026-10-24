@@ -315,6 +315,22 @@ ULTRA_O_FILES := $(foreach file,$(ULTRA_S_FILES),$(BUILD_DIR)/$(file:.s=.o)) \
 
 GODDARD_O_FILES := $(foreach file,$(GODDARD_C_FILES),$(BUILD_DIR)/$(file:.c=.o))
 
+ifeq ($(TARGET_NDS),1)
+$(GODDARD_O_FILES): Makefile
+$(GODDARD_O_FILES): CFLAGS = -fno-strict-aliasing -fwrapv -Os -fno-lto -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections -ffast-math $(TARGET_CFLAGS) $(DEF_INC_CFLAGS)
+
+NDS_GD_ANIM_SOURCES := $(wildcard src/goddard/dynlists/anim*.c)
+NDS_GD_ANIM_GENERATED := $(patsubst %.c,$(BUILD_DIR)/%.nds.c,$(NDS_GD_ANIM_SOURCES))
+NDS_GD_ANIM_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(NDS_GD_ANIM_SOURCES))
+
+$(NDS_GD_ANIM_GENERATED): $(BUILD_DIR)/%.nds.c: %.c tools/nds_pack_goddard.py
+	$(V)$(PYTHON) tools/nds_pack_goddard.py $< $@
+
+$(NDS_GD_ANIM_OBJECTS): $(BUILD_DIR)/%.o: $(BUILD_DIR)/%.nds.c
+	$(call print,Compiling packed Goddard animation:,$<,$@)
+	$(V)$(CC) -c $(CFLAGS) -Isrc/goddard/dynlists -MMD -MP -MT $@ -MF $(@:.o=.d) -o $@ $<
+endif
+
 LIBGCC_O_FILES := $(foreach file,$(LIBGCC_C_FILES),$(BUILD_DIR)/$(file:.c=.o))
 
 DEP_FILES := $(O_FILES:.o=.d) $(ULTRA_O_FILES:.o=.d) $(GODDARD_O_FILES:.o=.d) $(LIBGCC_O_FILES:.o=.d) $(BUILD_DIR)/$(LD_SCRIPT).d
@@ -952,6 +968,22 @@ NDS_SEGMENT_STUBS_C := $(BUILD_DIR)/nds_segment_stubs.c
 NDS_SEGMENT_STUBS_O := $(NDS_SEGMENT_STUBS_C:.c=.o)
 
 NDS_OVERLAY_SYMS_LD := $(BUILD_DIR)/nds_overlay_syms.ld
+
+NDS_GODDARD_MODULE := $(BUILD_DIR)/goddard.so
+NDS_GODDARD_EXPORTS := $(BUILD_DIR)/nds_goddard_exports.o
+
+$(NDS_GODDARD_MODULE): $(GODDARD_O_FILES)
+	$(V)$(CC) -shared -nostdlib -Wl,--gc-sections,-Bsymbolic,--hash-style=sysv,-z,max-page-size=16 -o $@ $^
+
+$(BUILD_DIR)/nds_goddard_exports.s: $(NDS_GODDARD_MODULE) tools/nds_goddard_exports.py
+	$(V)$(PYTHON) tools/nds_goddard_exports.py $(NDS_OVERLAY_NM) $< $@
+
+$(NDS_GODDARD_EXPORTS): $(BUILD_DIR)/nds_goddard_exports.s
+	$(V)$(CC) $(TARGET_CFLAGS) -c -o $@ $<
+
+$(NITROFS_DIR)/data/goddard.so: $(NDS_GODDARD_MODULE)
+	@mkdir -p $(dir $@)
+	@cp $< $@
 NDS_DL_STAMP := $(BUILD_DIR)/nds_static_dl.config
 .PHONY: nds_dl_config_force
 $(NDS_DL_STAMP): nds_dl_config_force
@@ -1028,9 +1060,9 @@ $(ARM7): $(ARM7_O_FILES)
 	@$(PRINT) "$(GREEN)Linking ARM7 binary:  $(BLUE)$@ $(NO_COL)\n"
 	$(V)$(LD) -L $(BUILD_DIR) -o $@ $(ARM7_O_FILES) $(ARM7_LDFLAGS)
 
-$(ARM9): $(GFX_O_FILES) $(NDS_MAIN_O_FILES) $(NDS_SEGMENT_STUBS_O) $(ULTRA_O_FILES) $(GODDARD_O_FILES) $(NDS_OVERLAY_SYMS_LD)
+$(ARM9): $(GFX_O_FILES) $(NDS_MAIN_O_FILES) $(NDS_SEGMENT_STUBS_O) $(ULTRA_O_FILES) $(NDS_GODDARD_EXPORTS) $(NDS_OVERLAY_SYMS_LD)
 	@$(PRINT) "$(GREEN)Linking ARM9 binary:  $(BLUE)$@ $(NO_COL)\n"
-	$(V)$(LD) -L $(BUILD_DIR) -T $(NDS_OVERLAY_SYMS_LD) -o $@ $(GFX_O_FILES) $(NDS_MAIN_O_FILES) $(NDS_SEGMENT_STUBS_O) $(ULTRA_O_FILES) $(GODDARD_O_FILES) $(LDFLAGS)
+	$(V)$(LD) -L $(BUILD_DIR) -T $(NDS_OVERLAY_SYMS_LD) -o $@ $(GFX_O_FILES) $(NDS_MAIN_O_FILES) $(NDS_SEGMENT_STUBS_O) $(ULTRA_O_FILES) $(NDS_GODDARD_EXPORTS) $(LDFLAGS)
 
 $(NITROFS_DIR)/sound:
 	@mkdir -p $@
@@ -1049,7 +1081,7 @@ NDS_NITROFS_FILES := \
 	$(NITROFS_DIR)/sound/sound_data.tbl \
 	$(NITROFS_DIR)/sound/sequences.bin
 
-$(ROM): $(ARM7) $(ARM9) $(NDS_NITROFS_FILES) $(NDS_NITROFS_DATA) $(NDS_ICON)
+$(ROM): $(ARM7) $(ARM9) $(NDS_NITROFS_FILES) $(NDS_NITROFS_DATA) $(NITROFS_DIR)/data/goddard.so $(NDS_ICON)
 	@$(PRINT) "$(GREEN)Building ROM: $(BLUE)$@ $(NO_COL)\n"
 	$(V)$(NDSTOOL) -c $@ \
 	-9 $(ARM9) \

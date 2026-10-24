@@ -24,6 +24,9 @@ extern void nds_debug_printf(const char *fmt, ...);
 #include "game/save_file.h"
 #include "game/sound_init.h"
 #include "goddard/renderer.h"
+#ifdef TARGET_NDS
+#include "nds/nds_goddard.h"
+#endif
 #include "geo_layout.h"
 #include "graph_node.h"
 #include "level_script.h"
@@ -302,8 +305,9 @@ static void level_cmd_load_mio0(void) {
 }
 
 static void level_cmd_load_mario_head(void) {
-#ifndef TARGET_NDS
-
+#ifdef TARGET_NDS
+    nds_goddard_load(CMD_GET(s16, 2));
+#else
     void *addr = main_pool_alloc(DOUBLE_SIZE_ON_64_BIT(0xE1000), MEMORY_POOL_LEFT);
     if (addr != NULL) {
         gdm_init(addr, DOUBLE_SIZE_ON_64_BIT(0xE1000));
@@ -315,7 +319,6 @@ static void level_cmd_load_mario_head(void) {
         CN_DEBUG_PRINTF(("face anime memory overflow\n"));
     }
 #endif
-
     sCurrentCmd = CMD_NEXT;
 }
 

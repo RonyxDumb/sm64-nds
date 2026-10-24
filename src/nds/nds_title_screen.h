@@ -26,9 +26,12 @@ extern struct NdsTitleState gNdsTitleState;
 extern volatile unsigned char gNdsAudioEnabled;
 extern unsigned char gNdsShowFps;
 extern volatile unsigned char gNdsFps;
+extern volatile unsigned char gNdsTitleBgm;
 
 int nds_title_begin(short arg, int unused);
 int nds_title_update(void);
+int nds_title_update_level(short arg, int unused);
+int nds_title_handoff(short arg, int unused);
 int nds_title_active(void);
 void nds_title_leave(void);
 void nds_title_frame_end(void);

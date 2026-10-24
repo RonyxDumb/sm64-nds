@@ -17,6 +17,7 @@ struct NdsTitleState gNdsTitleState;
 volatile unsigned char gNdsAudioEnabled = 1;
 unsigned char gNdsShowFps;
 volatile unsigned char gNdsFps;
+volatile unsigned char gNdsTitleBgm;
 extern u8 gNdsAudioDisabled;
 static int sSceneFade;
 static unsigned int sHeldDirection, sRepeat;
@@ -28,6 +29,7 @@ int nds_title_active(void) {
 int nds_title_begin(UNUSED short arg, UNUSED int unused) {
     nds_title_state_begin(&gNdsTitleState, gNdsAudioEnabled && !gNdsAudioDisabled, gNdsShowFps);
     sSceneFade = sRepeat = sHeldDirection = 0;
+    gNdsTitleBgm = 1;
     setBrightness(3, -16);
     return 0;
 }
@@ -35,6 +37,7 @@ int nds_title_begin(UNUSED short arg, UNUSED int unused) {
 void nds_title_leave(void) {
     if (!nds_title_active()) return;
     gNdsTitleState.phase = NDS_TITLE_HIDDEN;
+    gNdsTitleBgm = 0;
     sSceneFade = NDS_TITLE_FADE_FRAMES;
 }
 
@@ -85,6 +88,15 @@ int nds_title_update(void) {
     return s->phase == NDS_TITLE_HANDOFF ? 100 : 0;
 }
 
+int nds_title_update_level(UNUSED short arg, UNUSED int unused) {
+    return nds_title_update();
+}
+
+int nds_title_handoff(UNUSED short arg, UNUSED int unused) {
+    nds_title_leave();
+    return 0;
+}
+
 Gfx *geo_nds_title_skybox(s32 context, UNUSED struct GraphNode *node, UNUSED void *data) {
     if (context != GEO_CONTEXT_RENDER) return NULL;
     extern const u8 *const water_skybox_ptrlist[];
@@ -126,7 +138,7 @@ Gfx *geo_nds_title_logo(s32 context, struct GraphNode *node, UNUSED void *data) 
     Gfx *dl = alloc_display_list(4 * sizeof(*dl));
     if (!matrix || !dl) return NULL;
     node->flags = (node->flags & 0xFF) | (LAYER_OPAQUE << 8);
-    guTranslate(matrix, -90.0f, 420.0f, 0.0f);
+    guTranslate(matrix, 6.0f, 420.0f, 0.0f);
     gSPMatrix(dl, matrix, G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_PUSH);
     gSPDisplayList(dl + 1, &intro_seg7_dl_logo);
     gSPPopMatrix(dl + 2, G_MTX_MODELVIEW);

@@ -22,7 +22,7 @@
 #define MAX_GD_DLS 1000
 #define OS_MESG_SI_COMPLETE 0x33333333
 
-#ifndef NO_SEGMENTED_MEMORY
+#if !defined(NO_SEGMENTED_MEMORY) && !defined(TARGET_NDS)
 #define GD_VIRTUAL_TO_PHYSICAL(addr) ((uintptr_t)(addr) &0x0FFFFFFF)
 #define GD_LOWER_24(addr) ((uintptr_t)(addr) &0x00FFFFFF)
 #define GD_LOWER_29(addr) (((uintptr_t)(addr)) & 0x1FFFFFFF)
@@ -35,6 +35,13 @@
 #define MTX_INTPART_PACK(w1, w2) (((w1) &0xFFFF0000) | (((w2) >> 16) & 0xFFFF))
 #define MTX_FRACPART_PACK(w1, w2) ((((w1) << 16) & 0xFFFF0000) | ((w2) &0xFFFF))
 #define LOOKAT_PACK(c) ((s32) MIN(((c) * (128.0)), 127.0) & 0xff)
+
+/* Projection LOAD reaches the DS GPU as 4.12, while the source is 16.16. */
+#ifdef TARGET_NDS
+#define GD_PROJECTION_SCALE 0.0625f
+#else
+#define GD_PROJECTION_SCALE 1.0f
+#endif
 
 struct GdDisplayList {
 
@@ -924,6 +931,10 @@ void gd_printf(const char *format, ...) {
     if (csr - buf >= ARRAY_COUNT(buf) - 1) {
         fatal_printf("printf too long");
     }
+#ifdef TARGET_NDS
+    extern void nocashMessage(const char *message);
+    nocashMessage(buf);
+#endif
 }
 
 void gd_exit(UNUSED s32 code) {
@@ -2488,7 +2499,7 @@ void gd_create_ortho_matrix(f32 l, f32 r, f32 b, f32 t, f32 n, f32 f) {
 
     gSPPerspNormalize(next_gfx(), 0xFFFF);
 
-    guOrtho(&DL_CURRENT_MTX(sCurrentGdDl), l, r, b, t, n, f, 1.0f);
+    guOrtho(&DL_CURRENT_MTX(sCurrentGdDl), l, r, b, t, n, f, GD_PROJECTION_SCALE);
     orthoMtx = GD_LOWER_29(&DL_CURRENT_MTX(sCurrentGdDl));
     gSPMatrix(next_gfx(), orthoMtx, G_MTX_PROJECTION | G_MTX_LOAD | G_MTX_NOPUSH);
 
@@ -2510,7 +2521,8 @@ void gd_create_perspective_matrix(f32 fovy, f32 aspect, f32 near, f32 far) {
     UNUSED f32 unused = 0.0625f;
 
     sGdPerspTimer += 0.1;
-    guPerspective(&DL_CURRENT_MTX(sCurrentGdDl), &perspNorm, fovy, aspect, near, far, 1.0f);
+    guPerspective(&DL_CURRENT_MTX(sCurrentGdDl), &perspNorm, fovy, aspect, near, far,
+                  GD_PROJECTION_SCALE);
 
     gSPPerspNormalize(next_gfx(), perspNorm);
 
@@ -2527,6 +2539,13 @@ void gd_create_perspective_matrix(f32 fovy, f32 aspect, f32 near, f32 far) {
 
 s32 setup_view_buffers(const char *name, struct ObjView *view, UNUSED s32 ulx, UNUSED s32 uly,
                        UNUSED s32 lrx, UNUSED s32 lry) {
+#ifdef TARGET_NDS
+    /* Preserve depth-test flags; the DS GPU supplies the actual buffers. */
+    view->parent = sScreenView;
+    view->gdDlNum = 0;
+    view->unk74 = 0;
+    return 0;
+#else
     char memtrackerName[0x100];
 
     if (view->flags & (VIEW_Z_BUF | VIEW_COLOUR_BUF) && !(view->flags & VIEW_UNK_1000)) {
@@ -2583,6 +2602,7 @@ s32 setup_view_buffers(const char *name, struct ObjView *view, UNUSED s32 ulx, U
 
 #ifdef AVOID_UB
     return 0;
+#endif
 #endif
 }
 
@@ -2930,7 +2950,13 @@ void gd_init(void) {
     imin("gd_init");
     i = (u32)(sMemBlockPoolSize - DOUBLE_SIZE_ON_64_BIT(0x3E800));
     data = gd_allocblock(i);
+#ifdef TARGET_NDS
+    /* The N64 build borrows its framebuffers for temporary objects. The DS
+     * renders in VRAM, so both object classes share the work heap instead. */
+    gd_add_mem_to_heap(i, data, PERM_G_MEM_BLOCK | TEMP_G_MEM_BLOCK);
+#else
     gd_add_mem_to_heap(i, data, 0x10);
+#endif
     sAlpha = (u16) 0xff;
     D_801A867C = 0;
     D_801A8680 = 0;
@@ -3407,7 +3433,7 @@ void stub_renderer_18(UNUSED u32 a0) {
 void stub_renderer_19(UNUSED u32 a0) {
 }
 
-#ifndef NO_SEGMENTED_MEMORY
+#if !defined(NO_SEGMENTED_MEMORY) && !defined(TARGET_NDS)
 
 static void gd_block_dma(u32 romAddr, void *vAddr, s32 size) {
     s32 blockSize;

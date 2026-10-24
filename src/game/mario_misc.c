@@ -17,6 +17,9 @@
 #include "level_update.h"
 #include "mario_actions_cutscene.h"
 #include "mario_misc.h"
+#ifdef TARGET_NDS
+#include "nds/nds_goddard.h"
+#endif
 #include "memory.h"
 #include "object_helpers.h"
 #include "object_list_processor.h"
@@ -63,8 +66,8 @@ struct GraphNodeObject gMirrorMario;
 
 Gfx *geo_draw_mario_head_goddard(s32 callContext, struct GraphNode *node, Mat4 *c) {
 #ifdef TARGET_NDS
-
-    return NULL;
+    if (callContext != GEO_CONTEXT_RENDER) return NULL;
+    return nds_goddard_render(((struct GraphNodeGenerated *)node)->parameter);
 #else
     Gfx *gfx = NULL;
     s16 sfx = 0;

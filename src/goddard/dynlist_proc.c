@@ -16,6 +16,9 @@
 #include "renderer.h"
 #include "shape_helper.h"
 #include "skin.h"
+#ifdef TARGET_NDS
+#include "nds/nds_goddard_anim.h"
+#endif
 
 #define DYNOBJ_NAME_SIZE 8
 
@@ -747,6 +750,14 @@ void alloc_animdata(struct ObjAnimator *animator) {
 
     for (i = 0; i < animCnt; i++) {
         allocSpace = NULL;
+#ifdef TARGET_NDS
+        /* Keep the lossless source in the transient module. Only the two
+         * keyframes needed for interpolation are expanded by move_animator. */
+        if (curAnimSrc->type & NDS_GODDARD_ANIM_PACKED) {
+            animDst[i] = *curAnimSrc++;
+            continue;
+        }
+#endif
         if (curAnimSrc->type != 0) {
             switch (curAnimSrc->type) {
                 case GD_ANIM_CAMERA_EYE3S_LOOKAT3S:
