@@ -3,6 +3,7 @@
 
 #include "macros.h"
 #include "types.h"
+#include "nds/nds_bottom_ui.h"
 
 #include "make_const_nonconst.h"
 
@@ -7886,7 +7887,9 @@ static const Gfx intro_seg7_dl_07009E38[] = {
 
 static const Gfx intro_seg7_dl_0700ADC0[] = {
     gsSPVertex(intro_seg7_vertex_07006AC0, 16, 0),
+#ifndef NDS_BOTTOM_UI
     gsSP2Triangles( 0,  1,  2, 0x0,  0,  3,  1, 0x0),
+#endif
     gsSP2Triangles( 4,  5,  6, 0x0,  7,  8,  9, 0x0),
     gsSP2Triangles(10,  7,  9, 0x0,  7, 11, 12, 0x0),
     gsSP2Triangles( 7, 12,  8, 0x0, 13, 14,  7, 0x0),

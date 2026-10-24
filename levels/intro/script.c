@@ -17,8 +17,13 @@
 
 #include "make_const_nonconst.h"
 #include "levels/intro/header.h"
+#include "nds/nds_bottom_ui.h"
+#include "nds/nds_title_screen.h"
 
 const LevelScript level_intro_splash_screen[] = {
+#ifdef NDS_BOTTOM_UI
+    JUMP(level_intro_mario_head_regular),
+#else
     INIT_LEVEL(),
     FIXED_LOAD( _goddardSegmentStart,  _goddardSegmentRomStart,  _goddardSegmentRomEnd),
     LOAD_RAW ( 0x13, _behaviorSegmentRomStart, _behaviorSegmentRomEnd),
@@ -41,9 +46,25 @@ const LevelScript level_intro_splash_screen[] = {
 
     SET_REG( 16),
     EXIT_AND_EXECUTE( 0x14, _menuSegmentRomStart, _menuSegmentRomEnd, /*level_main_menu_entry_1*/level_intro_mario_head_regular),
+#endif
 };
 
 const LevelScript level_intro_mario_head_regular[] = {
+#ifdef NDS_BOTTOM_UI
+    INIT_LEVEL(),
+    LOAD_RAW(0x13, _behaviorSegmentRomStart, _behaviorSegmentRomEnd),
+    LOAD_MIO0(0x07, _intro_segment_7SegmentRomStart, _intro_segment_7SegmentRomEnd),
+    LOAD_MIO0_TEXTURE(0x0A, _water_skybox_mio0SegmentRomStart, _water_skybox_mio0SegmentRomEnd),
+    ALLOC_LEVEL_POOL(),
+    AREA(1, intro_geo_mario_head_regular),
+    END_AREA(),
+    FREE_LEVEL_POOL(),
+    CALL(0, nds_title_begin),
+    LOAD_AREA(1),
+    SET_MENU_MUSIC(SEQ_MENU_TITLE_SCREEN),
+    CALL_LOOP(LVL_INTRO_REGULAR, lvl_intro_update),
+    JUMP(script_intro_L1),
+#else
     INIT_LEVEL(),
     BLACKOUT( TRUE),
     FIXED_LOAD( _goddardSegmentStart,  _goddardSegmentRomStart,  _goddardSegmentRomEnd),
@@ -69,9 +90,13 @@ const LevelScript level_intro_mario_head_regular[] = {
     JUMP_IF(OP_EQ, 100, script_intro_L1),
     JUMP_IF(OP_EQ, 101, script_intro_L2),
     JUMP(script_intro_L4),
+#endif
 };
 
 const LevelScript level_intro_mario_head_dizzy[] = {
+#ifdef NDS_BOTTOM_UI
+    JUMP(level_intro_mario_head_regular),
+#else
     INIT_LEVEL(),
     BLACKOUT( TRUE),
     FIXED_LOAD( _goddardSegmentStart,  _goddardSegmentRomStart,  _goddardSegmentRomEnd),
@@ -94,6 +119,7 @@ const LevelScript level_intro_mario_head_dizzy[] = {
     JUMP_IF( OP_EQ,  100, script_intro_L1),
     JUMP_IF( OP_EQ,  101, script_intro_L2),
     JUMP(script_intro_L4),
+#endif
 };
 
 const LevelScript level_intro_entry_4[] = {
@@ -119,8 +145,10 @@ const LevelScript level_intro_entry_4[] = {
 
 const LevelScript script_intro_L1[] = {
     STOP_MUSIC( 0x00BE),
+#ifndef NDS_BOTTOM_UI
     TRANSITION( WARP_TRANSITION_FADE_INTO_COLOR,  16,  0xFF, 0xFF, 0xFF),
     SLEEP( 16),
+#endif
     CLEAR_LEVEL(),
     SLEEP( 2),
     SET_REG( 16),

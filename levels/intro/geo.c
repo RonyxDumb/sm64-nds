@@ -14,6 +14,12 @@
 #include "make_const_nonconst.h"
 
 #include "levels/intro/header.h"
+#include "nds/nds_bottom_ui.h"
+
+#ifdef NDS_BOTTOM_UI
+Gfx *geo_nds_title_skybox(s32 context, struct GraphNode *node, void *data);
+Gfx *geo_nds_title_logo(s32 context, struct GraphNode *node, void *data);
+#endif
 
 const GeoLayout intro_geo_0002D0[] = {
     GEO_NODE_SCREEN_AREA(0, SCREEN_WIDTH/2, SCREEN_HEIGHT/2, SCREEN_WIDTH/2, SCREEN_HEIGHT/2),
@@ -50,7 +56,11 @@ const GeoLayout intro_geo_mario_head_regular[] = {
         GEO_OPEN_NODE(),
             GEO_NODE_ORTHO(100),
             GEO_OPEN_NODE(),
+#ifdef NDS_BOTTOM_UI
+                GEO_BACKGROUND(BACKGROUND_OCEAN_SKY, geo_nds_title_skybox),
+#else
                 GEO_ASM(0, geo_intro_regular_backdrop),
+#endif
 #if defined(VERSION_SH) || defined(VERSION_CN)
                 GEO_ASM(0, geo_intro_face_easter_egg),
 #endif
@@ -63,7 +73,14 @@ const GeoLayout intro_geo_mario_head_regular[] = {
         GEO_OPEN_NODE(),
             GEO_CAMERA_FRUSTUM(45, 128, 16384),
             GEO_OPEN_NODE(),
+#ifdef NDS_BOTTOM_UI
+                GEO_CAMERA(0, 0, 0, 3000, 0, 0, 0, NULL),
+                GEO_OPEN_NODE(),
+                    GEO_ASM(0, geo_nds_title_logo),
+                GEO_CLOSE_NODE(),
+#else
                 GEO_ASM(2, geo_draw_mario_head_goddard),
+#endif
             GEO_CLOSE_NODE(),
         GEO_CLOSE_NODE(),
 #ifdef VERSION_SH

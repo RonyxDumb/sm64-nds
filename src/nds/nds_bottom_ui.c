@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "nds_include.h"
+#include "nds_title_screen.h"
 #include "game/ingame_menu.h"
 #include "game/level_update.h"
 #include "game/memory.h"
@@ -21,6 +22,7 @@ static u16 sPixels[256 * 192 / 2] __attribute__((aligned(32)));
 static int sBg;
 static const u8 *sText;
 static int sStart, sLines, sChoice, sMore, sCamera;
+static int sPreviousValid, sTitleWasOpen;
 
 void nds_bottom_ui_camera(int status) { sCamera = status; }
 
@@ -100,8 +102,120 @@ void nds_bottom_ui_init(void) {
                 BG_PALETTE_SUB[8 + red * 36 + green * 6 + blue] =
                     RGB15((red * 31 + 2) / 5, (green * 31 + 2) / 5, (blue * 31 + 2) / 5);
     memset(sPixels, 0, sizeof(sPixels));
+    sPreviousValid = 0;
     upload_tiles();
     bgShow(sBg);
+}
+
+/* Title graphics share the HUD buffer and the same 48 KiB of sub VRAM.
+ * Deduplicate the repeating gradient tiles so every row remains visible. */
+static void title_upload(void) {
+    s16 hashes[1024];
+    u16 *vram = bgGetGfxPtr(sBg), *map = bgGetMapPtr(sBg);
+    int next = 33;
+    memset(hashes, -1, sizeof(hashes));
+    for (int tile = 0; tile < 768; tile++) {
+        const u16 *src = sPixels + tile * 32;
+        unsigned int hash = 2166136261u;
+        for (int i = 0; i < 32; i++) hash = (hash ^ src[i]) * 16777619u;
+        unsigned int slot = hash & 1023;
+        while (hashes[slot] >= 0 && memcmp(src, sPixels + hashes[slot] * 32, 64))
+            slot = (slot + 1) & 1023;
+        if (hashes[slot] >= 0) map[tile] = map[hashes[slot]];
+        else if (next < 768) {
+            hashes[slot] = tile;
+            memcpy(vram + next * 32, src, 64);
+            map[tile] = next++;
+        } else map[tile] = 32;
+    }
+}
+
+static int title_width(const char *text, int width) {
+    int result = 0;
+    while (*text) {
+        u8 c = encode(*text++);
+        result += c == DIALOG_CHAR_SPACE ? (5 * width + 7) / 8 :
+                  (gDialogCharWidths[c] * width + 7) / 8;
+    }
+    return result;
+}
+
+/* The actual SM64 dialog font, with a one-pixel navy shadow. */
+static void title_text(int x, int y, const char *text, int width, int height, int color) {
+    if (x >= 256 || y >= 192 || y + height <= 0 || x + title_width(text, width) <= 0) return;
+    void **lut = segmented_to_virtual(main_font_lut);
+    int columns[width], rows[height];
+    for (int dx = 0; dx < width; dx++) columns[dx] = (7 - dx * 8 / width) * 16;
+    for (int dy = 0; dy < height; dy++) rows[dy] = 15 - dy * 16 / height;
+    while (*text) {
+        u8 c = encode(*text++);
+        if (c != DIALOG_CHAR_SPACE && lut[c]) {
+            const u8 *tex = segmented_to_virtual(lut[c]);
+            for (int pass = 0; pass < 2; pass++)
+                for (int dy = 0; dy < height; dy++)
+                    for (int dx = 0; dx < width; dx++) {
+                        int value = tex[columns[dx] + rows[dy]];
+                        if ((value >> 3) >= 12 && (value & 7))
+                            pixel(x + dx + !pass, y + dy + !pass, pass ? color : 249);
+                    }
+        }
+        x += c == DIALOG_CHAR_SPACE ? (5 * width + 7) / 8 :
+             (gDialogCharWidths[c] * width + 7) / 8;
+    }
+}
+
+static void title_center(int offset, int y, const char *text, int w, int h, int color) {
+    title_text(offset + (256 - title_width(text, w)) / 2, y, text, w, h, color);
+}
+
+static void title_cursor(int x, int y) {
+    for (int dx = 0; dx < 8; dx++)
+        for (int dy = dx / 2; dy < 12 - dx / 2; dy++) {
+            pixel(x + dx + 1, y + dy + 1, 249);
+            pixel(x + dx, y + dy, 248);
+        }
+}
+
+static void title_present(void) {
+    const struct NdsTitleState *s = &gNdsTitleState;
+    static int previous[5];
+    int current[5] = { nds_title_slide(s), s->cursorY >> 8, s->audio, s->fps,
+                      (s->pulse[0] > 4) | ((s->pulse[1] > 4) << 1) };
+    if (sTitleWasOpen && memcmp(current, previous, sizeof(current)) == 0) return;
+    memcpy(previous, current, sizeof(current));
+    for (int i = 0; i < 24; i++)
+        BG_PALETTE_SUB[224 + i] = RGB15(0, 6 - i / 8, 18 - i / 4);
+    BG_PALETTE_SUB[248] = RGB15(31, 25, 4);
+    BG_PALETTE_SUB[249] = RGB15(0, 1, 6);
+    BG_PALETTE_SUB[250] = RGB15(18, 22, 29);
+    BG_PALETTE_SUB[251] = RGB15(31, 31, 31);
+    for (int y = 0; y < 192; y++) {
+        u16 color = 224 + y / 8;
+        color |= color << 8;
+        for (int x = 0; x < 32; x++)
+            for (int half = 0; half < 4; half++)
+                sPixels[((y >> 3) * 32 + x) * 32 + (y & 7) * 4 + half] = color;
+    }
+    int slide = nds_title_slide(s);
+    int home = -slide, options = 256 - slide;
+    title_center(home, 58, "START GAME", 14, 28, 251);
+    title_center(home, 100, "OPTIONS", 14, 28, 251);
+    title_center(options, 12, "OPTIONS", 12, 24, 251);
+    for (int x = 102; x < 154; x++) pixel(options + x, 42, 248);
+    title_text(options + 40, 62, "AUDIO", 11, 22, 251);
+    title_text(options + 40, 104, "FPS COUNTER", 11, 22, 251);
+    int values[2] = { s->audio, s->fps };
+    for (int row = 0; row < 2; row++) {
+        int y = 62 + row * 42 - (s->pulse[row] > 4 ? 1 : 0);
+        title_text(options + 204, y, values[row] ? "ON" : "OFF", 10, 22,
+                   values[row] ? 248 : 250);
+    }
+    if (slide > 128)
+        title_cursor(options + 22, (s->cursorY >> 8) - 2);
+    else title_cursor(home + 30, (s->cursorY >> 8) - 2);
+    if (s->pageFrame == NDS_TITLE_SLIDE_FRAMES)
+        title_center(0, 164, "A CHANGE   B BACK", 8, 16, 250);
+    title_upload();
 }
 
 void nds_bottom_ui_message(const unsigned char *text, int start, int lines,
@@ -249,15 +363,27 @@ struct BottomUiState {
     const u8 *text;
     int start, lines, choice, more, variable, camera;
     int lives, coins, stars, wedges, keys, flags, timer;
+    int fpsEnabled, fps;
 };
 static struct BottomUiState sPrevious;
-static int sPreviousValid;
 
 void nds_bottom_ui_present(void) {
     struct BottomUiState state;
+    if (nds_title_active()) {
+        title_present();
+        sTitleWasOpen = 1;
+        sText = NULL;
+        return;
+    }
+    if (sTitleWasOpen) {
+        nds_bottom_ui_init();
+        sTitleWasOpen = 0;
+    }
     memset(&state, 0, sizeof(state));
     state.text = sText;
     state.flags = gHudDisplay.flags;
+    state.fpsEnabled = gNdsShowFps;
+    state.fps = gNdsShowFps ? gNdsFps : 0;
     if (state.flags) {
         state.lives = gHudDisplay.lives;
         state.coins = gHudDisplay.coins;
@@ -285,6 +411,11 @@ void nds_bottom_ui_present(void) {
     memset(sPixels, 0, sizeof(sPixels));
     hud();
     if (sText) message();
+    if (gNdsShowFps) {
+        char fpsText[16];
+        snprintf(fpsText, sizeof(fpsText), "FPS %u", (unsigned int)gNdsFps);
+        ascii(194, 178, fpsText, 8, 12);
+    }
     upload_tiles();
     sText = NULL;
 }

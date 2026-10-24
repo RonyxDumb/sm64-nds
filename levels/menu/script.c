@@ -17,6 +17,7 @@
 
 #include "make_const_nonconst.h"
 #include "levels/menu/header.h"
+#include "nds/nds_bottom_ui.h"
 
 const LevelScript level_main_menu_entry_1[] = {
     INIT_LEVEL(),
@@ -44,7 +45,11 @@ const LevelScript level_main_menu_entry_1[] = {
     FREE_LEVEL_POOL(),
     LOAD_AREA( 1),
     SET_MENU_MUSIC( SEQ_MENU_FILE_SELECT),
+#ifdef NDS_BOTTOM_UI
+    TRANSITION(WARP_TRANSITION_FADE_FROM_COLOR, 16, 0, 0, 0),
+#else
     TRANSITION( WARP_TRANSITION_FADE_FROM_COLOR,  16,  0xFF, 0xFF, 0xFF),
+#endif
     CALL( 0,  lvl_init_menu_values_and_cursor_pos),
     CALL_LOOP( 0,  lvl_update_obj_and_load_file_selected),
     GET_OR_SET( OP_SET,  VAR_CURR_SAVE_FILE_NUM),

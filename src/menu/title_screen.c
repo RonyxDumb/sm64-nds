@@ -15,6 +15,8 @@
 #include "seq_ids.h"
 #include "sm64.h"
 #include "title_screen.h"
+#include "nds/nds_bottom_ui.h"
+#include "nds/nds_title_screen.h"
 
 #define STUB_LEVEL(textname, _1, _2, _3, _4, _5, _6, _7, _8) textname,
 #define DEFINE_LEVEL(textname, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10) textname,
@@ -116,6 +118,9 @@ s16 intro_level_select(void) {
 }
 
 s32 intro_regular(void) {
+#ifdef NDS_BOTTOM_UI
+    return nds_title_update();
+#else
     s32 level = LEVEL_NONE;
 
 #ifndef VERSION_JP
@@ -145,6 +150,7 @@ s32 intro_regular(void) {
     }
 
     return run_level_id_or_demo(level);
+#endif
 }
 
 s32 intro_game_over(void) {

@@ -26,6 +26,8 @@
 #include "nds_net.h"
 #include "nds_netplay.h"
 #include "nds_menu.h"
+#include "nds_bottom_ui.h"
+#include "nds_title_screen.h"
 
 
 /*
@@ -61,7 +63,7 @@
 
 u8 nds_audio_state;
 static u8 audio_step;
-static u8 fps;
+static volatile u8 fps;
 
 extern unsigned char *gSoundDataADSR;
 extern unsigned char *gSoundDataRaw;
@@ -281,6 +283,9 @@ static struct NdsAudioNote sAudioNotes[NDS_AUDIO_CHANNELS] __attribute__((aligne
 static void nds_pack_audio_note(struct NdsAudioNote *out, const struct Note *note) {
     out->enabled = note->enabled;
     out->ndsMuted = note->ndsMuted;
+#ifdef NDS_BOTTOM_UI
+    out->ndsMuted |= !gNdsAudioEnabled;
+#endif
     /* ARM7 reads only these two flags for disabled/muted channels. */
     if (!out->enabled || out->ndsMuted) return;
     out->ndsSourceFull = note->ndsSourceFull;
@@ -363,6 +368,9 @@ static void update_audio(void) {
 
 
 static void update_fps(void) {
+#ifdef NDS_BOTTOM_UI
+    gNdsFps = fps;
+#endif
 #ifdef NDS_DEBUG_CONSOLE
     if (sDebugConsole && !gNdsMenuOpen) {
         consoleSelect(sDebugConsole);
@@ -1218,14 +1226,12 @@ int main(void) {
     DC_FlushRange(sAudioNotes, sizeof(sAudioNotes));
     fifoSendValue32(FIFO_USER_01, (u32)sAudioNotes);
 
-#ifdef ENABLE_FPS
     timerStart(
         0,
         ClockDivider_1024,
         TIMER_FREQ_1024(1),
         update_fps
     );
-#endif
 
     /*
      * Multiplayer / netplay.

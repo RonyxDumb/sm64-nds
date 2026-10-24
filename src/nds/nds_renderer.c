@@ -6,6 +6,7 @@
 
 #include "nds_renderer.h"
 #include "nds_bottom_ui.h"
+#include "nds_title_screen.h"
 #include "nds_perf.h"
 #include "nds_gfx_commands.h"
 #include "c_button.h"
@@ -1203,11 +1204,6 @@ void renderer_init() {
     videoSetMode(MODE_0_3D);
     videoSetModeSub(MODE_0_2D);
 
-#ifdef ENABLE_FPS
-
-    consoleDemoInit();
-#endif
-
     glInit();
     glClearColor(0, 0, 0, 31);
     glClearDepth(GL_MAX_DEPTH);
@@ -1363,4 +1359,7 @@ void draw_frame(Gfx *display_list) {
     nds_perf_record(NDS_PERF_WAIT, waitStart);
 
     frame_count = 0;
+#ifdef NDS_BOTTOM_UI
+    nds_title_frame_end();
+#endif
 }

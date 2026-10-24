@@ -2922,6 +2922,10 @@ Gfx *geo_file_select_strings_and_menu_cursor(s32 callContext, UNUSED struct Grap
 }
 
 s32 lvl_init_menu_values_and_cursor_pos(UNUSED s32 arg, UNUSED s32 unused) {
+#if defined(TARGET_NDS) && defined(VERSION_US)
+    extern void nds_title_leave(void);
+    nds_title_leave();
+#endif
 #ifdef VERSION_EU
     s8 fileIndex;
 #endif

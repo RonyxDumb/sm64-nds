@@ -12,11 +12,9 @@ L'obiettivo di questa versione è rendere il gioco il più possibile adatto all'
 
 Questa versione include varie modifiche rispetto al port originale:
 
-- ripristino del flusso di avvio originale di Super Mario 64:
-  - splash / intro;
-  - schermata `PRESS START`;
-  - File Select;
-  - gioco senza selettore skin personalizzata;
+- menu iniziale con logo 3D e cielo sullo schermo superiore;
+- `START GAME` e `OPTIONS` sul touchscreen, con transizioni animate;
+- opzioni audio e contatore FPS, seguite dal File Select originale;
 - correzione del loop audio durante la pausa;
 - ricerca più robusta del percorso della ROM;
 - supporto migliorato per flashcart;
@@ -74,6 +72,21 @@ Output:
 
 ```text
 build/us_nds/sm64.us.nds
+```
+
+## Menu iniziale
+
+Usare la croce direzionale e A, oppure toccare una voce. In `OPTIONS`, A
+alterna ON/OFF, sinistra disattiva e destra attiva; B torna al menu.
+START avvia il gioco dal menu principale. Audio è inizialmente ON e FPS OFF;
+le scelte valgono per la sessione. Il contatore appare in basso durante il
+gioco e misura i fotogrammi effettivamente presentati.
+
+Il test della navigazione e delle transizioni si esegue con:
+
+```bash
+cc -std=c99 -Isrc tests/nds_title_menu.c src/nds/nds_title_state.c -o /tmp/nds-title-test
+/tmp/nds-title-test
 ```
 
 ---
