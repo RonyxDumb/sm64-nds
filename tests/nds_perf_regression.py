@@ -244,7 +244,10 @@ run('Per-area phase timing and CSV export', r'''
 #include <stdint.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <stdlib.h>
 static unsigned TIMER1_CR,TIMER2_CR,TIMER1_DATA,TIMER2_DATA;
+unsigned int main_pool_available(void){return 4096;}
+volatile unsigned int gNdsScacheArena;
 static unsigned testVblanks;
 volatile int gNdsGoddardRendered;
 unsigned nds_renderer_vblank_count(void){return testVblanks+=2;}

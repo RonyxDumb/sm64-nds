@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "nds_include.h"
 #include "nds_perf.h"
@@ -13,6 +14,7 @@ struct PerfArea {
     unsigned int frames, max, slow;
     /* Steady-state frames only (no level/segment loading in the frame). */
     unsigned int vblanks, presented, loadFrames;
+    unsigned int poolMin; /* lowest free main-pool bytes seen in the area */
     int level, area;
     unsigned long long phases[NDS_PERF_PHASES];
 };
@@ -100,6 +102,19 @@ static void dump(void) {
     fprintf(f, "counter,value\n");
     static const char *const names[] = {"dl_commands","emitted_vertices","position_tests","texture_misses","texture_evictions","texture_bytes","sample_bytes","remote_submissions","remote_late_polls","surface_geometry_hits","surface_geometry_misses","compiled_triangle_batches"};
     for (int i = 0; i < NDS_COUNT_LIMIT; i++) fprintf(f, "%s,%u\n", names[i], counters[i]);
+    {
+        /* Largest single heap block obtainable right now (binary search). */
+        extern volatile unsigned int gNdsScacheArena;
+        unsigned lo = 0, hi = 4u << 20;
+        while (hi - lo > 1024) {
+            unsigned mid = (lo + hi) / 2;
+            void *m = malloc(mid);
+            if (m) { free(m); lo = mid; } else hi = mid;
+        }
+        fprintf(f, "memory,largest_heap_block,%u,sample_cache_arena,%u\n", lo, (unsigned) gNdsScacheArena);
+        fprintf(f, "pool_min_free,level,area,bytes\n");
+        for (int i = 0; i < n; i++) fprintf(f, "pool_min_free,%d,%d,%u\n", sAreas[i].level, sAreas[i].area, sAreas[i].poolMin);
+    }
     fprintf(f, "histogram_ms,<20,20-25,25-30,30-34,34-40,40-50,50-67,>=67\nhistogram");
     for (int i = 0; i < 8; i++) fprintf(f, ",%u", sHist[i]);
     fprintf(f, "\nslow_frames,%u\nslow_phase,total_ticks\n", sSlowFrames);
@@ -143,6 +158,11 @@ void nds_perf_finish_frame(unsigned int start) {
         struct PerfArea *p = &sAreas[i];
         p->frames++; p->total += ticks;
         p->vblanks += vblanks;
+        {
+            extern unsigned int main_pool_available(void);
+            unsigned avail = main_pool_available();
+            if (p->frames == 1 || avail < p->poolMin) p->poolMin = avail;
+        }
         p->presented += nds_renderer_last_frame_presented();
         for (int j = 0; j < NDS_PERF_PHASES; j++) p->phases[j] += framePhases[j];
         if (ticks > p->max) p->max = ticks;
