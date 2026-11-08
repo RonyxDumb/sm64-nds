@@ -135,8 +135,12 @@ int nds_goddard_load(int scene) {
 
 static void vblank_callback(void) { if (sApi) sApi->vblank(); }
 
+/* Read and cleared by the profiler: this frame rendered the Goddard head. */
+volatile int gNdsGoddardRendered;
+
 Gfx *nds_goddard_render(int scene) {
     if (!sApi) return NULL;
+    gNdsGoddardRendered = 1;
     if (gPlayer1Controller->controllerData && !gWarpTransition.isActive)
         sApi->copyPad(gPlayer1Controller->controllerData);
     Gfx *dl = sApi->get(scene);

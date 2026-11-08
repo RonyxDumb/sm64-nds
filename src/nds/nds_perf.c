@@ -24,6 +24,11 @@ static unsigned sFramePhases[NDS_PERF_PHASES];
 static volatile int sPaused;
 static volatile int sReady, sDump;
 static unsigned sLastVblank;
+/* Steady-state frame-time histogram (ms buckets) and the phase totals of
+ * frames over 34 ms, to see what the remaining slow frames consist of. */
+static unsigned sHist[8];
+static unsigned long long sSlowPhases[NDS_PERF_PHASES];
+static unsigned sSlowFrames;
 static const char *const sNames[] = {
     "frame", "logic_inclusive", "renderer_inclusive", "bottom_ui_inclusive",
     "audio_irq", "sample_io_inclusive", "texture_upload", "vblank_irq",
@@ -95,6 +100,10 @@ static void dump(void) {
     fprintf(f, "counter,value\n");
     static const char *const names[] = {"dl_commands","emitted_vertices","position_tests","texture_misses","texture_evictions","texture_bytes","sample_bytes","remote_submissions","remote_late_polls","surface_geometry_hits","surface_geometry_misses","compiled_triangle_batches"};
     for (int i = 0; i < NDS_COUNT_LIMIT; i++) fprintf(f, "%s,%u\n", names[i], counters[i]);
+    fprintf(f, "histogram_ms,<20,20-25,25-30,30-34,34-40,40-50,50-67,>=67\nhistogram");
+    for (int i = 0; i < 8; i++) fprintf(f, ",%u", sHist[i]);
+    fprintf(f, "\nslow_frames,%u\nslow_phase,total_ticks\n", sSlowFrames);
+    for (int i = 0; i < NDS_PERF_PHASES; i++) fprintf(f, "slow,%s,%llu\n", sNames[i], sSlowPhases[i]);
     fprintf(f, "level,area,frames,total_ticks,max_ticks,frames_over_34ms,vblanks,presented,load_frames\n");
     for (int i = 0; i < n; i++) fprintf(f, "%d,%d,%u,%llu,%u,%u,%u,%u,%u\n", sAreas[i].level, sAreas[i].area, sAreas[i].frames, sAreas[i].total, sAreas[i].max, sAreas[i].slow, sAreas[i].vblanks, sAreas[i].presented, sAreas[i].loadFrames);
     fprintf(f, "level,area,phase,total_ticks\n");
@@ -116,8 +125,14 @@ void nds_perf_finish_frame(unsigned int start) {
     memset(sFramePhases, 0, sizeof(sFramePhases));
     leaveCriticalSection(irq);
     int i;
-    for (i = 0; i < sAreaCount; i++) if (sAreas[i].level == gCurrLevelNum && sAreas[i].area == gCurrAreaIndex) break;
-    if (i == sAreaCount && i < 80) { sAreaCount++; sAreas[i].level = gCurrLevelNum; sAreas[i].area = gCurrAreaIndex; }
+    /* The Goddard head screen keeps the previous level number: file its
+     * frames under level 1 (intro) instead of the last attract demo. */
+    extern volatile int gNdsGoddardRendered;
+    int level = gNdsGoddardRendered ? 1 : gCurrLevelNum;
+    int area = gNdsGoddardRendered ? 1 : gCurrAreaIndex;
+    gNdsGoddardRendered = 0;
+    for (i = 0; i < sAreaCount; i++) if (sAreas[i].level == level && sAreas[i].area == area) break;
+    if (i == sAreaCount && i < 80) { sAreaCount++; sAreas[i].level = level; sAreas[i].area = area; }
     unsigned vblankNow = nds_renderer_vblank_count();
     unsigned vblanks = vblankNow - sLastVblank;
     sLastVblank = vblankNow;
@@ -131,7 +146,19 @@ void nds_perf_finish_frame(unsigned int start) {
         p->presented += nds_renderer_last_frame_presented();
         for (int j = 0; j < NDS_PERF_PHASES; j++) p->phases[j] += framePhases[j];
         if (ticks > p->max) p->max = ticks;
-        if (ticks > NDS_PERF_HZ * 34u / 1000u) p->slow++;
+        if (ticks > NDS_PERF_HZ * 34u / 1000u) {
+            p->slow++;
+        }
+        if (ticks > NDS_PERF_HZ * 34u / 1000u && level > 1) {
+            sSlowFrames++;
+            for (int j = 0; j < NDS_PERF_PHASES; j++) sSlowPhases[j] += framePhases[j];
+        }
+        if (level > 1) {
+            static const unsigned edges[7] = { 20, 25, 30, 34, 40, 50, 67 };
+            unsigned ms = ticks * 1000u / NDS_PERF_HZ, b = 0;
+            while (b < 7 && ms >= edges[b]) b++;
+            sHist[b]++;
+        }
     }
     /* Disk I/O is explicit, on SELECT release, and is excluded from
      * the sampled frame. Never write from the audio/VBlank IRQ. */
