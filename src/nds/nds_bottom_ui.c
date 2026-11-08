@@ -306,50 +306,41 @@ static void counter(int x, int y, int icon, int value, int size) {
     hud_number(x + size + size / 2, y + size / 8, value, size * 3 / 4, 0);
 }
 
-static void power_meter(int x, int y, int size) {
-    void **lut = segmented_to_virtual(power_meter_health_segments_lut);
-    image(x, y, texture_power_meter_left_side, 32, 64, size / 2, size);
-    image(x + size / 2, y, texture_power_meter_right_side, 32, 64, size / 2, size);
-    int wedges = gHudDisplay.wedges;
-    if (wedges > 8) wedges = 8;
-    if (wedges > 0) image(x + size / 4, y + size / 4, lut[wedges - 1], 32, 32, size / 2, size / 2);
-}
-
-static void camera(int x, int y) {
+/* Small indicators fit into the same first row used during dialogs. */
+static void camera_compact(int x, int y) {
     void **lut = segmented_to_virtual(main_hud_camera_lut);
     if (sCamera == CAM_STATUS_NONE) return;
-    image(x, y, lut[GLYPH_CAM_CAMERA], 16, 16, 24, 24);
+    image(x, y, lut[GLYPH_CAM_CAMERA], 16, 16, 16, 16);
     int mode = (sCamera & CAM_STATUS_FIXED) ? GLYPH_CAM_FIXED :
         (sCamera & CAM_STATUS_MARIO) ? GLYPH_CAM_MARIO_HEAD : GLYPH_CAM_LAKITU_HEAD;
-    image(x + 26, y, lut[mode], 16, 16, 24, 24);
-    if (sCamera & CAM_STATUS_C_UP) image(x + 6, y - 12, lut[GLYPH_CAM_ARROW_UP], 8, 8, 12, 12);
-    if (sCamera & CAM_STATUS_C_DOWN) image(x + 6, y + 24, lut[GLYPH_CAM_ARROW_DOWN], 8, 8, 12, 12);
+    image(x + 19, y, lut[mode], 16, 16, 16, 16);
+    if (sCamera & CAM_STATUS_C_UP)
+        image(x + 39, y, lut[GLYPH_CAM_ARROW_UP], 8, 8, 8, 8);
+    if (sCamera & CAM_STATUS_C_DOWN)
+        image(x + 39, y + 8, lut[GLYPH_CAM_ARROW_DOWN], 8, 8, 8, 8);
 }
 
 static void hud(void) {
     int flags = gHudDisplay.flags;
     if (!flags) return;
-    if (sText) {
-        if (flags & HUD_DISPLAY_FLAG_LIVES) counter(2, 4, GLYPH_MARIO_HEAD, gHudDisplay.lives, 16);
-        if (flags & HUD_DISPLAY_FLAG_COIN_COUNT) counter(70, 4, GLYPH_COIN, gHudDisplay.coins, 16);
-        if (flags & HUD_DISPLAY_FLAG_STAR_COUNT) counter(140, 4, GLYPH_STAR, gHudDisplay.stars, 16);
-        if (flags & HUD_DISPLAY_FLAG_CAMERA_AND_POWER) power_meter(216, 0, 36);
-        return;
+
+    /* Always use the dialog-sized HUD; health is rendered on the upper
+     * screen and never consumes bottom-screen tile slots. */
+    if (flags & HUD_DISPLAY_FLAG_LIVES)
+        counter(2, 4, GLYPH_MARIO_HEAD, gHudDisplay.lives, 16);
+    if (flags & HUD_DISPLAY_FLAG_COIN_COUNT)
+        counter(70, 4, GLYPH_COIN, gHudDisplay.coins, 16);
+    if (flags & HUD_DISPLAY_FLAG_STAR_COUNT)
+        counter(140, 4, GLYPH_STAR, gHudDisplay.stars, 16);
+    if (flags & HUD_DISPLAY_FLAG_CAMERA_AND_POWER)
+        camera_compact(206, 4);
+
+    /* Extra counters must not overlap dialog text (which begins at y=40). */
+    if (!sText && (flags & HUD_DISPLAY_FLAG_KEYS) && gHudDisplay.keys > 0) {
+        ascii(8, 30, "KEYS", 8, 12);
+        hud_number(49, 30, gHudDisplay.keys, 12, 0);
     }
-    if (flags & HUD_DISPLAY_FLAG_LIVES) counter(8, 12, GLYPH_MARIO_HEAD, gHudDisplay.lives, 32);
-    if (flags & HUD_DISPLAY_FLAG_COIN_COUNT) counter(136, 12, GLYPH_COIN, gHudDisplay.coins, 32);
-    if (flags & HUD_DISPLAY_FLAG_STAR_COUNT) counter(8, 60, GLYPH_STAR, gHudDisplay.stars, 32);
-    /* The US HUD has no key bitmap in main_hud_lut. Only show this
-     * otherwise absent counter when keys are actually held. */
-    if ((flags & HUD_DISPLAY_FLAG_KEYS) && gHudDisplay.keys > 0) {
-        ascii(138, 60, "KEYS", 8, 16);
-        hud_number(174, 60, gHudDisplay.keys, 24, 0);
-    }
-    if (flags & HUD_DISPLAY_FLAG_CAMERA_AND_POWER) {
-        power_meter(16, 96, 80);
-        camera(166, 118);
-    }
-    if (flags & HUD_DISPLAY_FLAG_TIMER) {
+    if (!sText && (flags & HUD_DISPLAY_FLAG_TIMER)) {
         unsigned t = gHudDisplay.timer;
         ascii(8, 176, "TIME", 8, 16);
         hud_number(52, 172, t / 1800, 18, 0);
@@ -400,7 +391,7 @@ static void message(void) {
 struct BottomUiState {
     const u8 *text;
     int start, lines, choice, more, variable, camera;
-    int lives, coins, stars, wedges, keys, flags, timer;
+    int lives, coins, stars, keys, flags, timer;
     int fpsEnabled, fps;
 };
 static struct BottomUiState sPrevious;
@@ -426,7 +417,6 @@ void nds_bottom_ui_present(void) {
         state.lives = gHudDisplay.lives;
         state.coins = gHudDisplay.coins;
         state.stars = gHudDisplay.stars;
-        state.wedges = gHudDisplay.wedges;
         state.keys = gHudDisplay.keys;
         state.camera = sCamera;
         /* The original timer displays tenths, not individual frames. */
