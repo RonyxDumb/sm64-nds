@@ -489,6 +489,33 @@ NDS_ARM_CODE __attribute__((noinline)) static f32 nds_fixed16_to_float(s32 value
     return result.value;
 }
 
+/* Exact (s32) (f * 65536.0f) with integer operations: scaling by 2^16 is
+ * exact, and the conversion truncates toward zero; out-of-range values
+ * saturate and NaN gives 0, like the ARM EABI __aeabi_f2iz helper. */
+NDS_ITCM_CODE NDS_ARM_CODE __attribute__((noinline)) static s32 nds_float_to_fixed16(f32 value) {
+    union { f32 f; u32 u; } v;
+    u32 exponent, mantissa, magnitude;
+    s32 shift;
+    v.f = value;
+    exponent = (v.u >> 23) & 0xFF;
+    if (exponent < 127 - 16) {
+        return 0; /* |value * 65536| < 1, including zero and denormals */
+    }
+    if (exponent == 0xFF && (v.u & 0x7FFFFF)) {
+        return 0; /* NaN */
+    }
+    shift = (s32) exponent - (127 - 16 + 23);
+    mantissa = (v.u & 0x7FFFFF) | 0x800000;
+    if (shift >= 8) {
+        if (shift == 8 && mantissa == 0x800000 && (v.u >> 31)) {
+            return (s32) 0x80000000;
+        }
+        return (v.u >> 31) ? (s32) 0x80000000 : 0x7FFFFFFF;
+    }
+    magnitude = shift >= 0 ? mantissa << shift : mantissa >> -shift;
+    return (v.u >> 31) ? -(s32) magnitude : (s32) magnitude;
+}
+
 NDS_ITCM_CODE void mtxf_mul_to_fixed(Mtx *dest, Mat4 floatDest, Mat4 a, Mat4 b) {
     s32 af[4][3];
     s32 bf[4][3];
@@ -498,8 +525,8 @@ NDS_ITCM_CODE void mtxf_mul_to_fixed(Mtx *dest, Mat4 floatDest, Mat4 a, Mat4 b) 
 
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 3; j++) {
-            af[i][j] = (s32) (a[i][j] * 65536.0f);
-            bf[i][j] = (s32) (b[i][j] * 65536.0f);
+            af[i][j] = nds_float_to_fixed16(a[i][j]);
+            bf[i][j] = nds_float_to_fixed16(b[i][j]);
         }
     }
 
@@ -599,39 +626,39 @@ NDS_ITCM_CODE void mtxf_mul_fixed_to_fixed(Mtx *dest, Mat4 floatDest, s32 aFixed
 }
 
 NDS_ITCM_CODE void mtxf_rotate_zxy_and_translate_fixed(s32 dest[4][4], Vec3f translate, Vec3s rotate) {
-    s32 sx = (s32) (sins(rotate[0]) * 65536.0f);
-    s32 cx = (s32) (coss(rotate[0]) * 65536.0f);
-    s32 sy = (s32) (sins(rotate[1]) * 65536.0f);
-    s32 cy = (s32) (coss(rotate[1]) * 65536.0f);
-    s32 sz = (s32) (sins(rotate[2]) * 65536.0f);
-    s32 cz = (s32) (coss(rotate[2]) * 65536.0f);
+    s32 sx = nds_float_to_fixed16(sins(rotate[0]));
+    s32 cx = nds_float_to_fixed16(coss(rotate[0]));
+    s32 sy = nds_float_to_fixed16(sins(rotate[1]));
+    s32 cy = nds_float_to_fixed16(coss(rotate[1]));
+    s32 sz = nds_float_to_fixed16(sins(rotate[2]));
+    s32 cz = nds_float_to_fixed16(coss(rotate[2]));
 
     dest[0][0] = FIXED_MUL16(cy, cz) + FIXED_MUL16(FIXED_MUL16(sx, sy), sz);
     dest[1][0] = -FIXED_MUL16(cy, sz) + FIXED_MUL16(FIXED_MUL16(sx, sy), cz);
     dest[2][0] = FIXED_MUL16(cx, sy);
-    dest[3][0] = (s32) (translate[0] * 65536.0f);
+    dest[3][0] = nds_float_to_fixed16(translate[0]);
 
     dest[0][1] = FIXED_MUL16(cx, sz);
     dest[1][1] = FIXED_MUL16(cx, cz);
     dest[2][1] = -sx;
-    dest[3][1] = (s32) (translate[1] * 65536.0f);
+    dest[3][1] = nds_float_to_fixed16(translate[1]);
 
     dest[0][2] = -FIXED_MUL16(sy, cz) + FIXED_MUL16(FIXED_MUL16(sx, cy), sz);
     dest[1][2] = FIXED_MUL16(sy, sz) + FIXED_MUL16(FIXED_MUL16(sx, cy), cz);
     dest[2][2] = FIXED_MUL16(cx, cy);
-    dest[3][2] = (s32) (translate[2] * 65536.0f);
+    dest[3][2] = nds_float_to_fixed16(translate[2]);
 
     dest[0][3] = dest[1][3] = dest[2][3] = 0;
     dest[3][3] = 1 << 16;
 }
 
 NDS_ITCM_CODE void mtxf_rotate_xyz_and_translate_fixed(s32 dest[4][4], Vec3f translate, Vec3s rotate) {
-    s32 sx = (s32) (sins(rotate[0]) * 65536.0f);
-    s32 cx = (s32) (coss(rotate[0]) * 65536.0f);
-    s32 sy = (s32) (sins(rotate[1]) * 65536.0f);
-    s32 cy = (s32) (coss(rotate[1]) * 65536.0f);
-    s32 sz = (s32) (sins(rotate[2]) * 65536.0f);
-    s32 cz = (s32) (coss(rotate[2]) * 65536.0f);
+    s32 sx = nds_float_to_fixed16(sins(rotate[0]));
+    s32 cx = nds_float_to_fixed16(coss(rotate[0]));
+    s32 sy = nds_float_to_fixed16(sins(rotate[1]));
+    s32 cy = nds_float_to_fixed16(coss(rotate[1]));
+    s32 sz = nds_float_to_fixed16(sins(rotate[2]));
+    s32 cz = nds_float_to_fixed16(coss(rotate[2]));
 
     dest[0][0] = FIXED_MUL16(cy, cz);
     dest[0][1] = FIXED_MUL16(cy, sz);
@@ -648,9 +675,9 @@ NDS_ITCM_CODE void mtxf_rotate_xyz_and_translate_fixed(s32 dest[4][4], Vec3f tra
     dest[2][2] = FIXED_MUL16(cx, cy);
     dest[2][3] = 0;
 
-    dest[3][0] = (s32) (translate[0] * 65536.0f);
-    dest[3][1] = (s32) (translate[1] * 65536.0f);
-    dest[3][2] = (s32) (translate[2] * 65536.0f);
+    dest[3][0] = nds_float_to_fixed16(translate[0]);
+    dest[3][1] = nds_float_to_fixed16(translate[1]);
+    dest[3][2] = nds_float_to_fixed16(translate[2]);
     dest[3][3] = 1 << 16;
 }
 
@@ -705,24 +732,25 @@ NDS_ITCM_CODE void mtxf_mul_fixed_raw(s32 destFixed[4][4], Mat4 floatDest, s32 a
  * parent), i.e. an object's position in camera space, computed with the very
  * same fixed-point arithmetic and exported exactly like mtxf_scale_fixed()
  * exports row 3. Lets off-screen objects skip the rest of their matrix. */
-NDS_ITCM_CODE void mtxf_object_camera_position(Vec3f outFloat, Vec3f pos, const Mtx *bPacked) {
+NDS_ITCM_CODE void mtxf_object_camera_position(Vec3f outFloat, s32 outFixed[3], Vec3f pos, const Mtx *bPacked) {
     s32 t[3], j;
-    t[0] = (s32) (pos[0] * 65536.0f);
-    t[1] = (s32) (pos[1] * 65536.0f);
-    t[2] = (s32) (pos[2] * 65536.0f);
+    t[0] = nds_float_to_fixed16(pos[0]);
+    t[1] = nds_float_to_fixed16(pos[1]);
+    t[2] = nds_float_to_fixed16(pos[2]);
     for (j = 0; j < 3; j++) {
         s64 acc = (s64) t[0] * mtx_get_fixed(bPacked, 0, j)
                 + (s64) t[1] * mtx_get_fixed(bPacked, 1, j)
                 + (s64) t[2] * mtx_get_fixed(bPacked, 2, j);
         acc += (s64) mtx_get_fixed(bPacked, 3, j) * 65536;
-        outFloat[j] = nds_fixed16_to_float((s32) ((acc + 0x8000) >> 16));
+        outFixed[j] = (s32) ((acc + 0x8000) >> 16);
+        outFloat[j] = nds_fixed16_to_float(outFixed[j]);
     }
 }
 
 NDS_ITCM_CODE void mtxf_scale_fixed(s32 mtx[4][4], Mat4 floatDest, Vec3f s) {
-    s32 sx = (s32) (s[0] * 65536.0f);
-    s32 sy = (s32) (s[1] * 65536.0f);
-    s32 sz = (s32) (s[2] * 65536.0f);
+    s32 sx = nds_float_to_fixed16(s[0]);
+    s32 sy = nds_float_to_fixed16(s[1]);
+    s32 sz = nds_float_to_fixed16(s[2]);
     s32 i;
     for (i = 0; i < 4; i++) {
         mtx[0][i] = FIXED_MUL16(mtx[0][i], sx);

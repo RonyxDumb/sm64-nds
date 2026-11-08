@@ -801,12 +801,61 @@ static s32 obj_is_in_view(struct GraphNodeObject *node, Mat4 matrix) {
     return TRUE;
 }
 
+#if defined(TARGET_NDS) && defined(ARM9)
+/* obj_is_in_view() on the exact 16.16 camera-space position, without
+ * software floating point. Decisions can differ from the float version only
+ * within float rounding of a culling boundary. */
+static s32 obj_is_in_view_fixed(struct GraphNodeObject *node, const s32 camPos[3]) {
+    static const struct GraphNodePerspective *cachedFrustum;
+    static f32 cachedFov;
+    static s32 tanHalfFovFixed;
+    struct GraphNode *geo;
+    s32 cullingRadius, x, z, edge;
+
+    if (node->node.flags & GRAPH_RENDER_INVISIBLE) {
+        return FALSE;
+    }
+    if (cachedFrustum != gCurGraphNodeCamFrustum || cachedFov != gCurGraphNodeCamFrustum->fov) {
+        s16 halfFov = (gCurGraphNodeCamFrustum->fov / 2.0f + 1.0f) * 32768.0f / 180.0f + 0.5f;
+        tanHalfFovFixed = (s32) (sins(halfFov) / coss(halfFov) * 65536.0f);
+        cachedFrustum = gCurGraphNodeCamFrustum;
+        cachedFov = gCurGraphNodeCamFrustum->fov;
+    }
+    geo = node->sharedChild;
+    if (geo != NULL && geo->type == GRAPH_NODE_TYPE_CULLING_RADIUS) {
+        cullingRadius = ((struct GraphNodeCullingRadius *) geo)->cullingRadius;
+    } else {
+        cullingRadius = 300;
+    }
+    x = camPos[0];
+    z = camPos[2];
+    if ((s64) z > ((s64) (-100 + cullingRadius) << 16)) {
+        return FALSE;
+    }
+    if ((s64) z < ((s64) (-20000 - cullingRadius) << 16)) {
+        return FALSE;
+    }
+    edge = (s32) (((s64) -z * tanHalfFovFixed) >> 16);
+    if ((s64) x > (s64) edge + ((s64) cullingRadius << 16)) {
+        return FALSE;
+    }
+    if ((s64) x < -(s64) edge - ((s64) cullingRadius << 16)) {
+        return FALSE;
+    }
+    return TRUE;
+}
+#endif
+
 static void geo_process_object(struct Object *node) {
     s32 hasAnimation = (node->header.gfx.node.flags & GRAPH_RENDER_HAS_ANIMATION) != 0;
 
     s32 objFixed[4][4];
     s32 useFixed = FALSE;
     s32 deferredMatrix = FALSE;
+#if defined(TARGET_NDS) && defined(ARM9)
+    s32 camPosFixed[3];
+    s32 inView;
+#endif
 
     if (node->header.gfx.areaIndex == gCurGraphNodeRoot->areaIndex) {
         if (node->header.gfx.throwMatrix != NULL) {
@@ -821,8 +870,8 @@ static void geo_process_object(struct Object *node) {
              * known to be on screen (camera-to-object vector and view test).
              * The full rotated and scaled matrix is built below if visible;
              * both paths produce bit-identical values. */
-            mtxf_object_camera_position(gMatStack[gMatStackIndex + 1][3], node->header.gfx.pos,
-                                        gMatStackFixed[gMatStackIndex]);
+            mtxf_object_camera_position(gMatStack[gMatStackIndex + 1][3], camPosFixed,
+                                        node->header.gfx.pos, gMatStackFixed[gMatStackIndex]);
             deferredMatrix = TRUE;
 #else
             s32 localFixed[4][4];
@@ -874,10 +923,30 @@ static void geo_process_object(struct Object *node) {
         }
 #endif
 
+#if defined(TARGET_NDS) && defined(ARM9)
+        /* Advance the animation for every object, as the original does, but
+         * only set up the render globals (with their float division) for
+         * objects that are actually drawn. */
+        if (node->header.gfx.animInfo.curAnim != NULL && hasAnimation) {
+            node->header.gfx.animInfo.animFrame =
+                geo_update_animation_frame(&node->header.gfx.animInfo,
+                                           &node->header.gfx.animInfo.animFrameAccelAssist);
+        }
+        if (node->header.gfx.animInfo.curAnim != NULL) {
+            node->header.gfx.animInfo.animTimer = gAreaUpdateCounter;
+        }
+        inView = deferredMatrix ? obj_is_in_view_fixed(&node->header.gfx, camPosFixed)
+                                : obj_is_in_view(&node->header.gfx, gMatStack[gMatStackIndex]);
+        if (inView && node->header.gfx.animInfo.curAnim != NULL) {
+            geo_set_animation_globals(&node->header.gfx.animInfo, FALSE);
+        }
+        if (inView) {
+#else
         if (node->header.gfx.animInfo.curAnim != NULL) {
             geo_set_animation_globals(&node->header.gfx.animInfo, hasAnimation);
         }
         if (obj_is_in_view(&node->header.gfx, gMatStack[gMatStackIndex])) {
+#endif
             Mtx *mtx = alloc_display_list(sizeof(*mtx));
 
 #if defined(TARGET_NDS) && defined(ARM9)
