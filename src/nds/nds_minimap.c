@@ -5,24 +5,24 @@
 #include <string.h>
 #include "nds_include.h"
 #include "nds_minimap.h"
-#include "engine/math_util.h"
 #include "game/area.h"
 #include "game/level_update.h"
+#include "game/memory.h"
+#include "game/print.h"
+#include "game/segment2.h"
 
 #define MM_W (NDS_MINIMAP_SIZE * 8)
-#define MM_R 6                          /* arrow radius in pixels */
+#define MM_ICON 16                      /* Mario's HUD head, 16x16 */
 #define MM_HEADER 16
-
-#define PAL_MARIO 248
-#define PAL_WHITE 249
-#define PAL_SHADOW 250
 
 static int sBg1 = -1;
 static int sKeyLevel = -1, sKeyArea = -1;
 static int sReady, sGen, sVisible, sVramValid, sMapDirty;
 static int sOriginX, sOriginZ, sScale;
-static int sMarkX, sMarkY, sMarkDir = -1, sMarkValid;
-static int sWinX, sWinY, sWinW, sWinH;       /* BG0 tiles holding the arrow */
+static int sMarkX, sMarkY, sMarkValid;
+static int sWinX, sWinY, sWinW, sWinH;       /* BG0 tiles holding the icon */
+static u8 sIcon[MM_ICON][MM_ICON];
+static int sIconReady;
 
 static void path(char *buf, int size) {
     snprintf(buf, size, "nitro:/data/minimap/L%d_%d.bin", sKeyLevel, sKeyArea);
@@ -38,9 +38,6 @@ void nds_minimap_init(void) {
                 NDS_MINIMAP_SLOT + y * NDS_MINIMAP_SIZE + x;
     bgSetPriority(sBg1, 1);
     bgHide(sBg1);
-    BG_PALETTE_SUB[PAL_MARIO] = RGB15(31, 2, 2);
-    BG_PALETTE_SUB[PAL_WHITE] = RGB15(31, 31, 31);
-    BG_PALETTE_SUB[PAL_SHADOW] = RGB15(2, 2, 4);
     sVramValid = 0;
     sMarkValid = 0;
 }
@@ -103,22 +100,33 @@ static int load(unsigned short *vram) {
     return ok;
 }
 
-/* Red arrow with a white rim. */
-static int arrow_pixel(int dx, int dy, float fx, float fy) {
-    float f = dx * fx + dy * fy, s = dy * fx - dx * fy;
-    if (s < 0) s = -s;
-    if (f >= -1.8f && f <= 4.2f && s <= (4.2f - f) * 0.55f) return PAL_MARIO;
-    if (f >= -3.6f && f <= 6.2f && s <= (6.2f - f) * 0.62f) return PAL_WHITE;
-    return 0;
+/* The HUD's Mario head (RGBA16, bit 15 = opaque), mapped onto the bottom
+ * screen's 6x6x6 colour cube like the other HUD artwork. */
+static void icon_init(void) {
+    static const u8 quant[32] = {
+        0,0,0,0,1,1,1,1,1,1,2,2,2,2,2,2,
+        3,3,3,3,3,3,4,4,4,4,4,4,5,5,5,5
+    };
+    void **lut = segmented_to_virtual(main_hud_lut);
+    const u16 *tex = lut[GLYPH_MARIO_HEAD] ? segmented_to_virtual(lut[GLYPH_MARIO_HEAD]) : NULL;
+    memset(sIcon, 0, sizeof(sIcon));
+    if (!tex) return;
+    for (int y = 0; y < MM_ICON; y++)
+        for (int x = 0; x < MM_ICON; x++) {
+            unsigned c = tex[y * MM_ICON + x];
+            if (c & 0x8000)
+                sIcon[y][x] = 8 + quant[c & 31] * 36 + quant[(c >> 5) & 31] * 6 + quant[(c >> 10) & 31];
+        }
+    sIconReady = 1;
 }
 
+/* (sx, sy) is the icon's top-left corner in screen pixels. */
 static void draw_marker(unsigned short *vram, unsigned short *map, int sx, int sy) {
     static u8 buf[24][24];
-    s16 yaw = (s16)(sMarkDir << 12);
-    float fx = sins(yaw), fy = coss(yaw);
-    int x0 = (sx - MM_R - 1) >> 3, y0 = (sy - MM_R - 1) >> 3;
-    int x1 = (sx + MM_R + 1) >> 3, y1 = (sy + MM_R + 1) >> 3;
+    int x0 = sx >> 3, y0 = sy >> 3;
+    int x1 = (sx + MM_ICON - 1) >> 3, y1 = (sy + MM_ICON - 1) >> 3;
 
+    if (!sIconReady) icon_init();
     /* Give the previous window back to the (empty) HUD layer. */
     if (sMarkValid && !sMapDirty)
         for (int y = 0; y < sWinH; y++)
@@ -127,16 +135,10 @@ static void draw_marker(unsigned short *vram, unsigned short *map, int sx, int s
     sWinX = x0; sWinY = y0;
     sWinW = x1 - x0 + 1; sWinH = y1 - y0 + 1;
 
-    /* The arrow plus a one-pixel drop shadow towards the lower right. */
     memset(buf, 0, sizeof(buf));
-    for (int dy = -MM_R - 1; dy <= MM_R + 1; dy++)
-        for (int dx = -MM_R - 1; dx <= MM_R + 1; dx++) {
-            int px = sx + dx - x0 * 8, py = sy + dy - y0 * 8;
-            if ((unsigned)px >= 24 || (unsigned)py >= 24) continue;
-            int c = arrow_pixel(dx, dy, fx, fy);
-            if (c) buf[py][px] = c;
-            else if (arrow_pixel(dx - 1, dy - 1, fx, fy)) buf[py][px] = PAL_SHADOW;
-        }
+    for (int y = 0; y < MM_ICON; y++)
+        for (int x = 0; x < MM_ICON; x++)
+            buf[sy - y0 * 8 + y][sx - x0 * 8 + x] = sIcon[y][x];
     unsigned short *dst = vram + NDS_MINIMAP_MARKER * 32;
     for (int ty = 0; ty < sWinH; ty++)
         for (int tx = 0; tx < sWinW; tx++) {
@@ -161,16 +163,14 @@ void nds_minimap_present(unsigned short *vram, unsigned short *map) {
     }
     bgShow(sBg1);
 
-    /* Keep the whole arrow and its shadow inside the map. */
-    int x = ((int)m->pos[0] - sOriginX) / sScale;
-    int y = ((int)m->pos[2] - sOriginZ) / sScale;
-    int dir = ((u16)(m->faceAngle[1] + 0x800)) >> 12;
-    x = x < MM_R + 1 ? MM_R + 1 : x > MM_W - MM_R - 2 ? MM_W - MM_R - 2 : x;
-    y = y < MM_R + 1 ? MM_R + 1 : y > MM_W - MM_R - 2 ? MM_W - MM_R - 2 : y;
-    if (sMarkValid && !sMapDirty && x == sMarkX && y == sMarkY && dir == sMarkDir) return;
+    /* Centre the icon on Mario, keeping all of it inside the map. */
+    int x = ((int)m->pos[0] - sOriginX) / sScale - MM_ICON / 2;
+    int y = ((int)m->pos[2] - sOriginZ) / sScale - MM_ICON / 2;
+    x = x < 0 ? 0 : x > MM_W - MM_ICON ? MM_W - MM_ICON : x;
+    y = y < 0 ? 0 : y > MM_W - MM_ICON ? MM_W - MM_ICON : y;
+    if (sMarkValid && !sMapDirty && x == sMarkX && y == sMarkY) return;
     sMarkX = x;
     sMarkY = y;
-    sMarkDir = dir;
     draw_marker(vram, map, NDS_MINIMAP_COL * 8 + x, NDS_MINIMAP_ROW * 8 + y);
     sMarkValid = 1;
     sMapDirty = 0;

@@ -4,7 +4,7 @@
 /* Bottom-screen minimap. tools/nds_minimap_render.py pre-renders every
  * area from above, with its textures, at build time; the current area's
  * image is streamed from NitroFS into reserved sub BG tile slots and shown
- * on BG1, under the HUD. Mario's arrow is drawn on BG0 in a few dedicated
+ * on BG1, under the HUD. Mario's HUD head icon is drawn on BG0 in a few dedicated
  * tiles, so no copy of the map is kept in RAM. */
 
 #define NDS_MINIMAP_COL    8
