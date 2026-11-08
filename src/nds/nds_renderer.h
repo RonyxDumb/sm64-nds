@@ -25,7 +25,9 @@ struct Sprite {
 extern struct Sprite sprites[MAX_SPRITES];
 
 extern void renderer_init();
-extern void draw_frame(Gfx *display_list);
+extern bool draw_frame(Gfx *display_list);
+extern unsigned nds_renderer_vblank_count(void);
+extern bool nds_renderer_last_frame_presented(void);
 extern void renderer_invalidate_texture_cache(void);
 
 #endif

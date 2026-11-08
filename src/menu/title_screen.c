@@ -31,7 +31,11 @@ static s16 sPlayMarioGreeting = TRUE;
 static s16 sPlayMarioGameOver = TRUE;
 #endif
 
+#ifdef NDS_BENCH
+#define PRESS_START_DEMO_TIMER 20
+#else
 #define PRESS_START_DEMO_TIMER 800
+#endif
 
 s32 run_level_id_or_demo(s32 level) {
     gCurrDemoInput = NULL;

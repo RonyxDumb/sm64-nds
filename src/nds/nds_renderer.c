@@ -88,6 +88,12 @@ DTCM_BSS static uint8_t *c_buffer;
 
 DTCM_BSS static bool texture_dirty;
 DTCM_BSS static bool lights_dirty;
+/* CPU copy of the hardware directional (vector) matrix. Every object node
+ * loads its modelview with G_MTX_LOAD, so the 3x3 part is known exactly
+ * and lighting does not need glGetFixed(), which stalls until the whole
+ * geometry FIFO has drained. Unknown after multiplies and pops. */
+DTCM_BSS static int vector_matrix[9];
+DTCM_BSS static bool vector_matrix_known;
 DTCM_BSS static int num_lights;
 
 DTCM_BSS static int polygon_id;
@@ -113,7 +119,22 @@ DTCM_BSS static uint16_t fog_table_max;
 
 DTCM_BSS static int no_texture;
 DTCM_BSS static int bound_texture;
-DTCM_BSS static int frame_count;
+/* Frame pacing. SM64 advances its simulation once per presented frame and
+ * is designed for 30 Hz, i.e. one frame every two DS VBlanks. Frames are
+ * scheduled against fixed deadlines instead of "at least two VBlanks after
+ * the previous frame": a frame that overruns its deadline is made up by the
+ * following ones, so isolated slow frames no longer slow the game down.
+ * When a whole frame of lateness has accumulated, the next frame keeps the
+ * simulation and scene update but skips the GPU work, catching up quickly. */
+static volatile uint32_t vblank_count;
+static uint32_t frame_deadline;
+static bool skip_next_render;
+static bool last_frame_presented;
+
+unsigned nds_renderer_vblank_count(void) { return vblank_count; }
+bool nds_renderer_last_frame_presented(void) { return last_frame_presented; }
+#define NDS_FRAME_VBLANKS 2
+#define NDS_MAX_CATCHUP_VBLANKS 6
 
 DTCM_BSS static Vtx_t *vertex_batch[BATCH_SIZE];
 DTCM_BSS static uint8_t batch_count;
@@ -487,7 +508,11 @@ ITCM_CODE static void g_vtx(Gwords *words) {
         if (lights_dirty) {
 
             int m[12];
-            glGetFixed(GL_GET_MATRIX_VECTOR, m);
+            if (vector_matrix_known) {
+                for (int i = 0; i < 9; i++) m[i] = vector_matrix[i];
+            } else {
+                glGetFixed(GL_GET_MATRIX_VECTOR, m);
+            }
 
             /* Lights 0 and 1 serve only automatic texture coordinates. */
             for (int i = (geometry_mode & G_TEXTURE_GEN) ? 0 : 2; i < num_lights; i++) {
@@ -508,26 +533,41 @@ ITCM_CODE static void g_vtx(Gwords *words) {
             lights_dirty = false;
         }
 
+        /* Same integer arithmetic as before, but with light state held in
+         * locals: byte stores to the vertex colours alias everything and
+         * otherwise force every light field to be reloaded per vertex.
+         * The normal and the colour share bytes, so read the normal first. */
+        int nl = num_lights;
+        if (nl > 4) nl = 4; /* lights[] has five slots; ambient is lights[nl] */
+        const uint32_t ar = lights[nl].r, ag = lights[nl].g, ab = lights[nl].b;
+        const bool texgen = (geometry_mode & G_TEXTURE_GEN) != 0;
+        int ldir[2][3], lcol[2][3], ndir = 0;
+        for (int l = 2; l < nl; l++, ndir++) {
+            ldir[ndir][0] = lights[l].nx; ldir[ndir][1] = lights[l].ny; ldir[ndir][2] = lights[l].nz;
+            lcol[ndir][0] = lights[l].r;  lcol[ndir][1] = lights[l].g;  lcol[ndir][2] = lights[l].b;
+        }
+        const int t0x = lights[0].nx, t0y = lights[0].ny, t0z = lights[0].nz;
+        const int t1x = lights[1].nx, t1y = lights[1].ny, t1z = lights[1].nz;
+
         for (int i = index - count; i < index; i++) {
-            Vtx_t  *v = &vertex_buffer[i].v;
-            Vtx_tn *n = &vertex_buffer[i].n;
+            Vtx_t *v = &vertex_buffer[i].v;
+            const int n0 = vertex_buffer[i].n.n[0];
+            const int n1 = vertex_buffer[i].n.n[1];
+            const int n2 = vertex_buffer[i].n.n[2];
 
-            uint32_t r = lights[num_lights].r;
-            uint32_t g = lights[num_lights].g;
-            uint32_t b = lights[num_lights].b;
-
-            for (int i = 2; i < num_lights; i++) {
-                int intensity = (lights[i].nx * n->n[0] + lights[i].ny * n->n[1] + lights[i].nz * n->n[2]) >> 7;
+            uint32_t r = ar, g = ag, b = ab;
+            for (int l = 0; l < ndir; l++) {
+                int intensity = (ldir[l][0] * n0 + ldir[l][1] * n1 + ldir[l][2] * n2) >> 7;
                 if (intensity > 0) {
-                    r += (intensity * lights[i].r) >> 12;
-                    g += (intensity * lights[i].g) >> 12;
-                    b += (intensity * lights[i].b) >> 12;
+                    r += (intensity * lcol[l][0]) >> 12;
+                    g += (intensity * lcol[l][1]) >> 12;
+                    b += (intensity * lcol[l][2]) >> 12;
                 }
             }
 
-            if (geometry_mode & G_TEXTURE_GEN) {
-                v->tc[0] = ((lights[1].nx * n->n[0] + lights[1].ny * n->n[1] + lights[1].nz * n->n[2]) >> 5) + (1 << 14);
-                v->tc[1] = ((lights[0].nx * n->n[0] + lights[0].ny * n->n[1] + lights[0].nz * n->n[2]) >> 5) + (1 << 14);
+            if (texgen) {
+                v->tc[0] = ((t1x * n0 + t1y * n1 + t1z * n2) >> 5) + (1 << 14);
+                v->tc[1] = ((t0x * n0 + t0y * n1 + t0z * n2) >> 5) + (1 << 14);
             }
 
             v->cn[0] = (r > 0xFF) ? 0xFF : r;
@@ -562,6 +602,7 @@ static void g_texture(Gwords *words) {
 
 static void g_popmtx(Gwords *words) {
 
+    vector_matrix_known = false;
     glMatrixMode(GL_MODELVIEW);
     glPopMatrix(words->w1 / 64);
 }
@@ -624,7 +665,15 @@ ITCM_CODE static void g_mtx(Gwords *words) {
 
         if (params & G_MTX_LOAD) {
             glLoadMatrix4x4(&matrix);
+            /* VECMTX_RESULT returns sign-expanded 1.3.12 entries. */
+            {
+                static const uint8_t vector_index[9] = { 0, 1, 2, 4, 5, 6, 8, 9, 10 };
+                for (int i = 0; i < 9; i++)
+                    vector_matrix[i] = (int16_t)matrix.m[vector_index[i]];
+            }
+            vector_matrix_known = true;
         } else {
+            vector_matrix_known = false;
 
             if (shrunk) {
                 const m4x4 enlarge = {{
@@ -1115,7 +1164,7 @@ done:
 
 static void end_frame() {
     unsigned perfStart = nds_perf_now();
-    frame_count++;
+    vblank_count++;
 #ifdef NDS_BOTTOM_UI
     nds_bottom_ui_vblank();
 #endif
@@ -1301,18 +1350,29 @@ void renderer_init() {
 #endif
 }
 
-void draw_frame(Gfx *display_list) {
+bool draw_frame(Gfx *display_list) {
 
     background = true;
     z_depth = 0x1000 * 6;
     fog_status = 0;
     tint_active = false;
+    vector_matrix_known = false;
 
+    const bool render = !skip_next_render;
+    last_frame_presented = render;
     unsigned perfStart = nds_perf_now();
-    execute(display_list);
-    glFlush(GL_TRANS_MANUALSORT);
+    if (render) {
+        execute(display_list);
+        glFlush(GL_TRANS_MANUALSORT);
+    } else {
+        /* The previous image stays on screen: the 3D engine keeps
+         * rendering the last swapped polygon list until the next flush. */
+        batch_count = 0;
+    }
 
-    if (fog_status && fog_max > fog_min) {
+    if (!render) {
+        /* Hardware fog state still describes the image being shown. */
+    } else if (fog_status && fog_max > fog_min) {
 
         if (!fog_table_valid || fog_table_min != fog_min || fog_table_max != fog_max) {
             int shift = 0;
@@ -1357,12 +1417,25 @@ void draw_frame(Gfx *display_list) {
 #endif
     nds_perf_record(NDS_PERF_RENDER, perfStart);
     unsigned waitStart = nds_perf_now();
-    for (int i = frame_count; i < 2; i++)
+    frame_deadline += NDS_FRAME_VBLANKS;
+    int32_t late = (int32_t)(vblank_count - frame_deadline);
+    if (late > NDS_MAX_CATCHUP_VBLANKS) {
+        /* Far behind (loading, a long hitch): accept it and resynchronise
+         * rather than running a burst of frames to catch up. */
+        frame_deadline = vblank_count;
+        late = 0;
+    }
+    while ((int32_t)(vblank_count - frame_deadline) < 0)
         swiWaitForVBlank();
     nds_perf_record(NDS_PERF_WAIT, waitStart);
 
-    frame_count = 0;
+    /* late >= 0 means this frame missed its VBlank. With one VBlank or more
+     * of lateness the next frame cannot be drawn in time, so it only runs
+     * the simulation. Never skip two frames in a row: the picture keeps
+     * updating at 15 Hz or better even under sustained load. */
+    skip_next_render = render && late >= 1;
 #ifdef NDS_BOTTOM_UI
     nds_title_frame_end();
 #endif
+    return render;
 }

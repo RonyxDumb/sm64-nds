@@ -129,8 +129,10 @@ void nds_debug_console_clear(void) {
 /* ------------------------------------------------------------------------- */
 
 void exec_display_list(struct SPTask *spTask) {
-    draw_frame((Gfx *)spTask->task.t.data_ptr);
-    fps++;
+    /* Count frames actually presented, not skipped catch-up frames. */
+    if (draw_frame((Gfx *)spTask->task.t.data_ptr)) {
+        fps++;
+    }
 
 #ifdef NDS_DEBUG_CONSOLE
     if (gNdsMenuOpen) {

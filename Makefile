@@ -117,6 +117,16 @@ ifeq ($(TARGET_NDS),1)
   endif
 endif
 
+# NDS_BENCH=1 starts the attract-mode demos almost immediately on the
+# "PRESS START" screen. Used only for repeatable performance captures.
+NDS_BENCH ?= 0
+ifeq ($(TARGET_NDS),1)
+  $(eval $(call validate-option,NDS_BENCH,0 1))
+  ifeq ($(NDS_BENCH),1)
+    DEFINES += NDS_BENCH=1
+  endif
+endif
+
 COMPARE ?= 1
 $(eval $(call validate-option,COMPARE,0 1))
 
