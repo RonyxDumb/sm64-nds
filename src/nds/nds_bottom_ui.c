@@ -5,6 +5,7 @@
 #include <string.h>
 #include "nds_include.h"
 #include "nds_title_screen.h"
+#include "nds_minimap.h"
 #include "game/ingame_menu.h"
 #include "game/level_update.h"
 #include "game/memory.h"
@@ -90,6 +91,10 @@ static int ascii(int x, int y, const char *str, int w, int h) {
 #define UI_FIXED_FIRST_TILE (21 * 32)
 #define UI_FIXED_FIRST_Y    (21 * 8)
 
+/* While the minimap is shown its tiles occupy the slots just below the
+ * fixed rows, so packed HUD tiles must stop before them. */
+static int sPackLimit = UI_FIXED_FIRST_TILE;
+
 static void upload_tile_range(int first, int last, int *next) {
     u16 *vram = bgGetGfxPtr(sBg);
     u16 *map = bgGetMapPtr(sBg);
@@ -98,7 +103,7 @@ static void upload_tile_range(int first, int last, int *next) {
         int nonempty = 0;
         for (int j = 0; j < 32; j++) nonempty |= src[j];
         int slot = tile >= UI_FIXED_FIRST_TILE ? tile : (next ? *next : 32);
-        if (!nonempty || slot >= (tile >= UI_FIXED_FIRST_TILE ? 768 : UI_FIXED_FIRST_TILE)) {
+        if (!nonempty || slot >= (tile >= UI_FIXED_FIRST_TILE ? 768 : sPackLimit)) {
             map[tile] = 32;
             continue;
         }
@@ -115,6 +120,8 @@ static void upload_tiles(void) {
     for (int i = 0; i < 32; i++) vram[32 * 32 + i] = 0;
     upload_tile_range(0, UI_FIXED_FIRST_TILE, &next);
     upload_tile_range(UI_FIXED_FIRST_TILE, 768, NULL);
+    if (next > NDS_MINIMAP_SLOT) nds_minimap_invalidate();
+    nds_minimap_map_dirty();
 }
 
 void nds_bottom_ui_init(void) {
@@ -133,6 +140,7 @@ void nds_bottom_ui_init(void) {
             for (int blue = 0; blue < 6; blue++)
                 BG_PALETTE_SUB[8 + red * 36 + green * 6 + blue] =
                     RGB15((red * 31 + 2) / 5, (green * 31 + 2) / 5, (blue * 31 + 2) / 5);
+    nds_minimap_init();
     memset(sPixels, 0, sizeof(sPixels));
     sPreviousValid = 0;
     upload_tiles();
@@ -392,7 +400,7 @@ struct BottomUiState {
     const u8 *text;
     int start, lines, choice, more, variable, camera;
     int lives, coins, stars, keys, flags, timer;
-    int fpsEnabled, fps;
+    int fpsEnabled, fps, minimap;
 };
 static struct BottomUiState sPrevious;
 
@@ -409,6 +417,9 @@ void nds_bottom_ui_present(void) {
         sTitleWasOpen = 0;
     }
     memset(&state, 0, sizeof(state));
+    /* The minimap shares the area below the HUD with dialog text. */
+    state.minimap = nds_minimap_update(gHudDisplay.flags && !sText);
+    sPackLimit = state.minimap ? NDS_MINIMAP_SLOT : UI_FIXED_FIRST_TILE;
     state.text = sText;
     state.flags = gHudDisplay.flags;
     state.fpsEnabled = gNdsShowFps;
@@ -431,6 +442,7 @@ void nds_bottom_ui_present(void) {
         state.variable = gDialogVariable;
     }
     if (sPreviousValid && memcmp(&state, &sPrevious, sizeof(state)) == 0) {
+        nds_minimap_present(bgGetGfxPtr(sBg), bgGetMapPtr(sBg));
         sText = NULL;
         return;
     }
@@ -453,6 +465,7 @@ void nds_bottom_ui_present(void) {
             }
             sClipY = 0;
             upload_tile_range(UI_FIXED_FIRST_TILE, 768, NULL);
+            nds_minimap_present(bgGetGfxPtr(sBg), bgGetMapPtr(sBg));
             return;
         }
     }
@@ -467,6 +480,7 @@ void nds_bottom_ui_present(void) {
         ascii(194, 178, fpsText, 8, 12);
     }
     upload_tiles();
+    nds_minimap_present(bgGetGfxPtr(sBg), bgGetMapPtr(sBg));
     sText = NULL;
 }
 #endif

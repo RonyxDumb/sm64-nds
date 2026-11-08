@@ -170,6 +170,9 @@ del DS. Ottimizzazioni principali di questa versione:
   direzionale tenuta dalla CPU (nessuna attesa della GPU via `glGetFixed`);
 - **HUD inferiore**: quando cambiano solo cronometro o FPS si ridisegnano
   soltanto le ultime righe di tile.
+- **minimappa inferiore**: generata a runtime dalle collisioni dei pavimenti
+  dell'area (nessun asset in ROM, ~6 KB di RAM), mostra il piano su cui si
+  trova Mario; il segnalino riscrive solo i tile che attraversa.
 
 Misure con l'emulatore melonDS sulle demo originali (fotogrammi stazionari,
 SD con cluster da 32 KB), prima → dopo:
