@@ -22,7 +22,7 @@ extern void nds_audio_set_hardware_muted(u8 muted);
 #endif
 
 #ifdef TARGET_NDS
-#define NDS_ITCM_CODE __attribute__((section(".itcm")))
+#define NDS_ITCM_CODE __attribute__((section(".itcm"), target("arm")))
 #else
 #define NDS_ITCM_CODE
 #endif

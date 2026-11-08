@@ -8,7 +8,7 @@
 #include "trig_tables.inc.c"
 
 #ifdef TARGET_NDS
-#define NDS_ITCM_CODE __attribute__((section(".itcm")))
+#define NDS_ITCM_CODE __attribute__((section(".itcm"), target("arm")))
 #define NDS_ARM_CODE __attribute__((target("arm")))
 #else
 #define NDS_ITCM_CODE
@@ -698,6 +698,24 @@ NDS_ITCM_CODE void mtxf_mul_fixed_raw(s32 destFixed[4][4], Mat4 floatDest, s32 a
                 floatDest[i][j] = nds_fixed16_to_float(destFixed[i][j]);
             }
         }
+    }
+}
+
+/* Translation row of mtxf_mul_fixed_raw(rotate_zxy_and_translate_fixed(pos),
+ * parent), i.e. an object's position in camera space, computed with the very
+ * same fixed-point arithmetic and exported exactly like mtxf_scale_fixed()
+ * exports row 3. Lets off-screen objects skip the rest of their matrix. */
+NDS_ITCM_CODE void mtxf_object_camera_position(Vec3f outFloat, Vec3f pos, const Mtx *bPacked) {
+    s32 t[3], j;
+    t[0] = (s32) (pos[0] * 65536.0f);
+    t[1] = (s32) (pos[1] * 65536.0f);
+    t[2] = (s32) (pos[2] * 65536.0f);
+    for (j = 0; j < 3; j++) {
+        s64 acc = (s64) t[0] * mtx_get_fixed(bPacked, 0, j)
+                + (s64) t[1] * mtx_get_fixed(bPacked, 1, j)
+                + (s64) t[2] * mtx_get_fixed(bPacked, 2, j);
+        acc += (s64) mtx_get_fixed(bPacked, 3, j) * 65536;
+        outFloat[j] = nds_fixed16_to_float((s32) ((acc + 0x8000) >> 16));
     }
 }
 

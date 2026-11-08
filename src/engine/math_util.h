@@ -52,6 +52,7 @@ void mtxf_pack(Mtx *dest, s32 src[4][4]);
 /* floatDest may be NULL when the next operation exports the float mirror. */
 void mtxf_mul_fixed_raw(s32 destFixed[4][4], Mat4 floatDest, s32 aFixed[4][4], const Mtx *bPacked);
 void mtxf_scale_fixed(s32 mtx[4][4], Mat4 floatDest, Vec3f s);
+void mtxf_object_camera_position(Vec3f outFloat, Vec3f pos, const Mtx *bPacked);
 void mtxf_scale_vec3f(Mat4 dest, Mat4 mtx, Vec3f s);
 void mtxf_mul_vec3s(Mat4 mtx, Vec3s b);
 void mtxf_to_mtx(Mtx *dest, Mat4 src);

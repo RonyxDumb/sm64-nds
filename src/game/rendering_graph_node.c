@@ -1,7 +1,7 @@
 #include <PR/ultratypes.h>
 
 #if defined(TARGET_NDS) && defined(ARM9)
-#define NDS_ITCM_CODE __attribute__((section(".itcm")))
+#define NDS_ITCM_CODE __attribute__((section(".itcm"), target("arm")))
 #define NDS_DTCM_BSS  __attribute__((section(".sbss")))
 #define NDS_NOINLINE __attribute__((noinline))
 #else
@@ -608,8 +608,31 @@ NDS_NOINLINE static void geo_process_shadow(struct GraphNodeShadow *node) {
         if (shadowList != NULL) {
             mtx = alloc_display_list(sizeof(*mtx));
             gMatStackIndex++;
+#if defined(TARGET_NDS) && defined(ARM9)
+            {
+                /* translate(pos) * camera: the rotation rows are the camera's
+                 * own (1*b + 0*c + 0*d == b) and only the translation row needs
+                 * arithmetic, evaluated in the same order as mtxf_mul(). */
+                Mat4 *cam = gCurGraphNodeCamera->matrixPtr;
+                Mat4 *dst = &gMatStack[gMatStackIndex];
+                s32 i;
+                (void) mtxf;
+                for (i = 0; i < 3; i++) {
+                    (*dst)[i][0] = (*cam)[i][0];
+                    (*dst)[i][1] = (*cam)[i][1];
+                    (*dst)[i][2] = (*cam)[i][2];
+                    (*dst)[i][3] = 0;
+                }
+                for (i = 0; i < 3; i++) {
+                    (*dst)[3][i] = shadowPos[0] * (*cam)[0][i] + shadowPos[1] * (*cam)[1][i]
+                                 + shadowPos[2] * (*cam)[2][i] + (*cam)[3][i];
+                }
+                (*dst)[3][3] = 1;
+            }
+#else
             mtxf_translate(mtxf, shadowPos);
             mtxf_mul(gMatStack[gMatStackIndex], mtxf, *gCurGraphNodeCamera->matrixPtr);
+#endif
             mtxf_to_mtx(mtx, gMatStack[gMatStackIndex]);
             gMatStackFixed[gMatStackIndex] = mtx;
             if (gShadowAboveWaterOrLava == TRUE) {
@@ -692,6 +715,7 @@ static void geo_process_object(struct Object *node) {
 
     s32 objFixed[4][4];
     s32 useFixed = FALSE;
+    s32 deferredMatrix = FALSE;
 
     if (node->header.gfx.areaIndex == gCurGraphNodeRoot->areaIndex) {
         if (node->header.gfx.throwMatrix != NULL) {
@@ -701,16 +725,28 @@ static void geo_process_object(struct Object *node) {
             mtxf_billboard(gMatStack[gMatStackIndex + 1], gMatStack[gMatStackIndex],
                            node->header.gfx.pos, gCurGraphNodeCamera->roll);
         } else {
+#if defined(TARGET_NDS) && defined(ARM9)
+            /* Only the camera-space position is needed until the object is
+             * known to be on screen (camera-to-object vector and view test).
+             * The full rotated and scaled matrix is built below if visible;
+             * both paths produce bit-identical values. */
+            mtxf_object_camera_position(gMatStack[gMatStackIndex + 1][3], node->header.gfx.pos,
+                                        gMatStackFixed[gMatStackIndex]);
+            deferredMatrix = TRUE;
+#else
             s32 localFixed[4][4];
             mtxf_rotate_zxy_and_translate_fixed(localFixed, node->header.gfx.pos,
                                                 node->header.gfx.angle);
             /* Scaling immediately exports the complete float matrix. */
             mtxf_mul_fixed_raw(objFixed, NULL, localFixed,
                                gMatStackFixed[gMatStackIndex]);
+#endif
             useFixed = TRUE;
         }
 
-        if (useFixed) {
+        if (deferredMatrix) {
+            /* Built after the view test. */
+        } else if (useFixed) {
             mtxf_scale_fixed(objFixed, gMatStack[gMatStackIndex + 1], node->header.gfx.scale);
         } else {
             mtxf_scale_vec3f(gMatStack[gMatStackIndex + 1], gMatStack[gMatStackIndex + 1],
@@ -752,6 +788,17 @@ static void geo_process_object(struct Object *node) {
         }
         if (obj_is_in_view(&node->header.gfx, gMatStack[gMatStackIndex])) {
             Mtx *mtx = alloc_display_list(sizeof(*mtx));
+
+#if defined(TARGET_NDS) && defined(ARM9)
+            if (deferredMatrix) {
+                s32 localFixed[4][4];
+                mtxf_rotate_zxy_and_translate_fixed(localFixed, node->header.gfx.pos,
+                                                    node->header.gfx.angle);
+                mtxf_mul_fixed_raw(objFixed, NULL, localFixed,
+                                   gMatStackFixed[gMatStackIndex - 1]);
+                mtxf_scale_fixed(objFixed, gMatStack[gMatStackIndex], node->header.gfx.scale);
+            }
+#endif
 
             if (useFixed) {
                 mtxf_pack(mtx, objFixed);

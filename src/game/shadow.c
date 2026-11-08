@@ -1,4 +1,5 @@
 #include <PR/ultratypes.h>
+#include <string.h>
 #include <PR/gbi.h>
 #include <math.h>
 
@@ -240,8 +241,28 @@ void get_vertex_coords(s8 index, s8 shadowVertexType, s8 *xCoord, s8 *zCoord) {
 
 void calculate_vertex_xyz(s8 index, struct Shadow s, f32 *xPosVtx, f32 *yPosVtx, f32 *zPosVtx,
                           s8 shadowVertexType) {
+#ifdef TARGET_NDS
+    /* These terms depend only on the shadow, not on the vertex. Every
+     * shadow vertex used to recompute the same cosf/sinf calls (with double
+     * conversions) in software floating point; reuse them while the inputs
+     * are bit-for-bit identical. */
+    static f32 sCached[3];
+    static f32 sTiltedScale, sSinDown, sCosDown;
+    static u8 sCacheValid;
+    f32 key[3] = { s.floorTilt, s.shadowScale, s.floorDownwardAngle };
+    if (!sCacheValid || memcmp(key, sCached, sizeof(key)) != 0) {
+        f32 downwardAngleRad = s.floorDownwardAngle * M_PI / 180.0;
+        sTiltedScale = cosf(s.floorTilt * M_PI / 180.0) * s.shadowScale;
+        sSinDown = sinf(downwardAngleRad);
+        sCosDown = cosf(downwardAngleRad);
+        memcpy(sCached, key, sizeof(key));
+        sCacheValid = TRUE;
+    }
+    f32 tiltedScale = sTiltedScale;
+#else
     f32 tiltedScale = cosf(s.floorTilt * M_PI / 180.0) * s.shadowScale;
     f32 downwardAngle = s.floorDownwardAngle * M_PI / 180.0;
+#endif
     f32 halfScale;
     f32 halfTiltedScale;
     s8 xCoordUnit;
@@ -253,8 +274,13 @@ void calculate_vertex_xyz(s8 index, struct Shadow s, f32 *xPosVtx, f32 *yPosVtx,
     halfScale = (xCoordUnit * s.shadowScale) / 2.0;
     halfTiltedScale = (zCoordUnit * tiltedScale) / 2.0;
 
+#ifdef TARGET_NDS
+    *xPosVtx = (halfTiltedScale * sSinDown) + (halfScale * sCosDown) + s.parentX;
+    *zPosVtx = (halfTiltedScale * sCosDown) - (halfScale * sSinDown) + s.parentZ;
+#else
     *xPosVtx = (halfTiltedScale * sinf(downwardAngle)) + (halfScale * cosf(downwardAngle)) + s.parentX;
     *zPosVtx = (halfTiltedScale * cosf(downwardAngle)) - (halfScale * sinf(downwardAngle)) + s.parentZ;
+#endif
 
     if (gShadowAboveWaterOrLava) {
         *yPosVtx = s.floorHeight;

@@ -19,7 +19,7 @@
 #define PORTAMENTO_MODE_5 5
 
 #ifdef TARGET_NDS
-#define NDS_ITCM_CODE __attribute__((section(".itcm")))
+#define NDS_ITCM_CODE __attribute__((section(".itcm"), target("arm")))
 #else
 #define NDS_ITCM_CODE
 #endif

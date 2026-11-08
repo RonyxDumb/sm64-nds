@@ -127,6 +127,15 @@ ifeq ($(TARGET_NDS),1)
   endif
 endif
 
+# NDS_THUMB=1 compiles game logic (src/game, engine, menu, audio) as Thumb:
+# half-size instructions mean fewer instruction-cache refills from the DS's
+# 16-bit main RAM. ITCM code stays ARM. melonDS does not model those cache
+# refills and measures it ~5% slower, so it is off until checked on hardware.
+NDS_THUMB ?= 0
+ifeq ($(TARGET_NDS),1)
+  $(eval $(call validate-option,NDS_THUMB,0 1))
+endif
+
 COMPARE ?= 1
 $(eval $(call validate-option,COMPARE,0 1))
 
@@ -780,7 +789,7 @@ $(GLOBAL_ASM_DEP).$(NON_MATCHING):
 $(BUILD_DIR)/%.o: %.c
 	$(call print,Compiling:,$<,$@)
 	$(V)$(CC_CHECK) $(CC_CHECK_CFLAGS) -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d $<
-	$(V)$(CC) -c $(CFLAGS) -o $@ $<
+	$(V)$(CC) -c $(CFLAGS) $(NDS_CODE_MODE) -o $@ $<
 ifeq ($(VERSION),cn)
 	$(V)$(TOOLS_DIR)/patch_elf_32bit $@
 endif
@@ -797,6 +806,13 @@ $(BUILD_DIR)/arm7/%.o: %.c
 	$(call print,Compiling:,$<,$@)
 	$(V)$(CC_CHECK) $(ARM7_CC_CHECK_CFLAGS) -MMD -MP -MT $@ -MF $(BUILD_DIR)/arm7/$*.d $<
 	$(V)$(CC) -c $(ARM7_CFLAGS) -o $@ $<
+
+ifeq ($(NDS_THUMB),1)
+$(BUILD_DIR)/src/game/%.o:   NDS_CODE_MODE := -mthumb
+$(BUILD_DIR)/src/engine/%.o: NDS_CODE_MODE := -mthumb
+$(BUILD_DIR)/src/menu/%.o:   NDS_CODE_MODE := -mthumb
+$(BUILD_DIR)/src/audio/%.o:  NDS_CODE_MODE := -mthumb
+endif
 
 $(BUILD_DIR)/gfx/%.s: %.png %.grit
 	$(GRIT) $< -fts -o$(BUILD_DIR)/gfx/$*
