@@ -1,4 +1,5 @@
 #include <PR/ultratypes.h>
+#include <string.h>
 
 #if defined(TARGET_NDS) && defined(ARM9)
 #define NDS_ITCM_CODE __attribute__((section(".itcm"), target("arm")))
@@ -555,6 +556,92 @@ void geo_set_animation_globals(struct AnimInfo *node, s32 hasAnimation) {
 }
 
 /* Keep these large handlers out of the ITCM traversal body. */
+#if defined(TARGET_NDS) && defined(ARM9)
+/* Shadows of stationary objects (coins, signs, idle enemies...) are rebuilt
+ * from scratch every frame: nine floor queries and their vertex maths. Keep
+ * the last result per object while its position and shadow parameters are
+ * bit-identical, and rebuild it every few frames anyway so that water levels
+ * or platforms moving underneath are followed. Mario's shadow also depends
+ * on his animation and is never cached. */
+#define NDS_SHADOW_CACHE_SIZE 32
+#define NDS_SHADOW_REFRESH_FRAMES 4
+struct NdsShadowCacheEntry {
+    const void *object;
+    const struct GraphNodeShadow *node;
+    f32 pos[3];
+    f32 scale;
+    u32 frame, used;
+    s16 area;
+    u8 valid, hasList, aboveWater, onIce;
+    Vtx verts[9];
+    Gfx gfx[5];
+};
+static struct NdsShadowCacheEntry sNdsShadowCache[NDS_SHADOW_CACHE_SIZE];
+
+static Gfx *nds_cached_shadow(struct GraphNodeShadow *node, Vec3f pos, f32 scale) {
+    struct NdsShadowCacheEntry *e;
+    Gfx *list;
+    u32 slot;
+    s32 i;
+
+    if (node->shadowType == SHADOW_CIRCLE_PLAYER || gCurGraphNodeHeldObject != NULL) {
+        return create_shadow_below_xyz(pos[0], pos[1], pos[2], scale, node->shadowSolidity,
+                                       node->shadowType);
+    }
+
+    slot = (((uintptr_t) gCurGraphNodeObject >> 4) ^ ((uintptr_t) node >> 3)) % NDS_SHADOW_CACHE_SIZE;
+    e = &sNdsShadowCache[slot];
+    if (e->valid && e->object == gCurGraphNodeObject && e->node == node && e->area == gCurrAreaIndex
+        && memcmp(e->pos, pos, sizeof(e->pos)) == 0 && memcmp(&e->scale, &scale, sizeof(scale)) == 0
+        && (u32) (gGlobalTimer - e->frame) < NDS_SHADOW_REFRESH_FRAMES) {
+        gShadowAboveWaterOrLava = e->aboveWater;
+        gMarioOnIceOrCarpet = e->onIce;
+        e->used = gGlobalTimer;
+        return e->hasList ? e->gfx : NULL;
+    }
+
+    list = create_shadow_below_xyz(pos[0], pos[1], pos[2], scale, node->shadowSolidity,
+                                   node->shadowType);
+    if (e->valid && e->used == gGlobalTimer) {
+        /* Another shadow drawn this frame still points at this slot. */
+        return list;
+    }
+
+    e->valid = FALSE;
+    if (list != NULL) {
+        /* Copy the five-command list and the vertices it loads, and point
+         * the copy's G_VTX at the cached vertices. */
+        s32 vtxCmd = -1;
+        u32 count = 0;
+        for (i = 0; i < 5; i++) {
+            e->gfx[i] = list[i];
+            if ((list[i].words.w0 >> 24) == G_VTX) {
+                vtxCmd = i;
+                count = (list[i].words.w0 >> 12) & 0xFF;
+            }
+        }
+        if (vtxCmd < 0 || count == 0 || count > 9
+            || (list[4].words.w0 >> 24) != G_ENDDL) {
+            return list;
+        }
+        memcpy(e->verts, segmented_to_virtual((void *) list[vtxCmd].words.w1), count * sizeof(Vtx));
+        e->gfx[vtxCmd].words.w1 = (uintptr_t) VIRTUAL_TO_PHYSICAL(e->verts);
+    }
+    e->object = gCurGraphNodeObject;
+    e->node = node;
+    memcpy(e->pos, pos, sizeof(e->pos));
+    e->scale = scale;
+    e->frame = gGlobalTimer;
+    e->area = gCurrAreaIndex;
+    e->hasList = list != NULL;
+    e->used = gGlobalTimer;
+    e->aboveWater = gShadowAboveWaterOrLava;
+    e->onIce = gMarioOnIceOrCarpet;
+    e->valid = TRUE;
+    return list != NULL ? e->gfx : NULL;
+}
+#endif
+
 NDS_NOINLINE static void geo_process_shadow(struct GraphNodeShadow *node) {
     Gfx *shadowList;
     Mat4 mtxf;
@@ -603,8 +690,12 @@ NDS_NOINLINE static void geo_process_shadow(struct GraphNodeShadow *node) {
             }
         }
 
+#if defined(TARGET_NDS) && defined(ARM9)
+        shadowList = nds_cached_shadow(node, shadowPos, shadowScale);
+#else
         shadowList = create_shadow_below_xyz(shadowPos[0], shadowPos[1], shadowPos[2], shadowScale,
                                              node->shadowSolidity, node->shadowType);
+#endif
         if (shadowList != NULL) {
             mtx = alloc_display_list(sizeof(*mtx));
             gMatStackIndex++;
