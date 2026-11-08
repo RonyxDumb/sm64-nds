@@ -1086,9 +1086,21 @@ $(ARM7): $(ARM7_O_FILES)
 	@$(PRINT) "$(GREEN)Linking ARM7 binary:  $(BLUE)$@ $(NO_COL)\n"
 	$(V)$(LD) -L $(BUILD_DIR) -o $@ $(ARM7_O_FILES) $(ARM7_LDFLAGS)
 
-$(ARM9): $(GFX_O_FILES) $(NDS_MAIN_O_FILES) $(NDS_SEGMENT_STUBS_O) $(ULTRA_O_FILES) $(NDS_GODDARD_EXPORTS) $(NDS_OVERLAY_SYMS_LD)
+# The single-precision soft-float helpers (add/sub, mul/div, compare,
+# float->int) are called thousands of times per frame from all game code.
+# ds_arm9.ld places the .text of any object named *.itcm* in ITCM, so link
+# private copies of those libgcc members under such a name.
+NDS_SOFTFLOAT_MEMBERS := _arm_addsubsf3.o _arm_muldivsf3.o _arm_cmpsf2.o _arm_fixsfsi.o
+NDS_SOFTFLOAT_ITCM := $(BUILD_DIR)/nds_softfloat.itcm.o
+NDS_LIBGCC_THUMB = $(shell $(CC) $(TARGET_CFLAGS) -mthumb -mthumb-interwork -print-libgcc-file-name)
+$(NDS_SOFTFLOAT_ITCM):
+	@mkdir -p $(BUILD_DIR)/softfloat
+	$(V)cd $(BUILD_DIR)/softfloat && $(DEVKITARM)/bin/arm-none-eabi-ar x $(NDS_LIBGCC_THUMB) $(NDS_SOFTFLOAT_MEMBERS)
+	$(V)$(DEVKITARM)/bin/arm-none-eabi-ld -r -o $@ $(addprefix $(BUILD_DIR)/softfloat/,$(NDS_SOFTFLOAT_MEMBERS))
+
+$(ARM9): $(GFX_O_FILES) $(NDS_MAIN_O_FILES) $(NDS_SEGMENT_STUBS_O) $(ULTRA_O_FILES) $(NDS_GODDARD_EXPORTS) $(NDS_OVERLAY_SYMS_LD) $(NDS_SOFTFLOAT_ITCM)
 	@$(PRINT) "$(GREEN)Linking ARM9 binary:  $(BLUE)$@ $(NO_COL)\n"
-	$(V)$(LD) -L $(BUILD_DIR) -T $(NDS_OVERLAY_SYMS_LD) -o $@ $(GFX_O_FILES) $(NDS_MAIN_O_FILES) $(NDS_SEGMENT_STUBS_O) $(ULTRA_O_FILES) $(NDS_GODDARD_EXPORTS) $(LDFLAGS)
+	$(V)$(LD) -L $(BUILD_DIR) -T $(NDS_OVERLAY_SYMS_LD) -o $@ $(GFX_O_FILES) $(NDS_MAIN_O_FILES) $(NDS_SEGMENT_STUBS_O) $(ULTRA_O_FILES) $(NDS_GODDARD_EXPORTS) $(NDS_SOFTFLOAT_ITCM) $(LDFLAGS)
 
 $(NITROFS_DIR)/sound:
 	@mkdir -p $@

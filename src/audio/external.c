@@ -854,14 +854,15 @@ static void delete_sound_from_bank(u8 bank, u8 soundIndex) {
     sSoundBankFreeListFront[bank] = soundIndex;
 }
 
-NDS_ITCM_CODE static void update_background_music_after_sound(u8 bank, u8 soundIndex) {
+static void update_background_music_after_sound(u8 bank, u8 soundIndex) {
     if (sSoundBanks[bank][soundIndex].soundBits & SOUND_LOWER_BACKGROUND_MUSIC) {
         sSoundBanksThatLowerBackgroundMusic &= (1 << bank) ^ 0xffff;
         begin_background_music_fade(50);
     }
 }
 
-NDS_ITCM_CODE static void select_current_sounds(u8 bank) {
+/* Runs at 30 Hz from the game thread: main RAM is fine. */
+static void select_current_sounds(u8 bank) {
     u32 isDiscreteAndStatus;
     u8 latestSoundIndex;
     u8 i;
