@@ -35,9 +35,12 @@ void nds_bottom_ui_vblank(void) {
 
 void nds_bottom_ui_camera(int status) { sCamera = status; }
 
+/* Rows above this are left untouched (partial HUD redraws). */
+static int sClipY;
+
 static void pixel(int x, int y, int color) {
     int offset, shift;
-    if ((unsigned)x >= 256 || (unsigned)y >= 192) return;
+    if ((unsigned)x >= 256 || (unsigned)y >= 192 || y < sClipY) return;
     offset = ((y >> 3) * 32 + (x >> 3)) * 32 + (y & 7) * 4 + ((x & 7) >> 1);
     shift = (x & 1) * 8;
     sPixels[offset] = (sPixels[offset] & ~(255 << shift)) | (color << shift);
@@ -56,6 +59,7 @@ static int glyph(int x, int y, u8 c, int width, int height) {
     int rows[width];
     for (int dx = 0; dx < width; dx++) rows[dx] = (7 - dx * 8 / width) * 16;
     for (int dy = 0; dy < height; dy++) {
+        if (y + dy < sClipY) continue;
         int tx = 15 - dy * 16 / height;
         for (int dx = 0; dx < width; dx++) {
             int v = tex[rows[dx] + tx];
@@ -80,20 +84,37 @@ static int ascii(int x, int y, const char *str, int w, int h) {
     return x;
 }
 
-static void upload_tiles(void) {
+/* The bottom three tile rows (timer, FPS counter, prompts) always use
+ * their own tile index as VRAM slot, so they can be refreshed alone
+ * without repacking the rest of the screen. */
+#define UI_FIXED_FIRST_TILE (21 * 32)
+#define UI_FIXED_FIRST_Y    (21 * 8)
+
+static void upload_tile_range(int first, int last, int *next) {
     u16 *vram = bgGetGfxPtr(sBg);
     u16 *map = bgGetMapPtr(sBg);
-    int next = 33;
-    /* All VRAM writes use halfwords; DS VRAM does not support byte stores. */
-    for (int i = 0; i < 32; i++) vram[32 * 32 + i] = 0;
-    for (int tile = 0; tile < 768; tile++) {
+    for (int tile = first; tile < last; tile++) {
         const u16 *src = sPixels + tile * 32;
         int nonempty = 0;
         for (int j = 0; j < 32; j++) nonempty |= src[j];
-        if (!nonempty || next >= 768) { map[tile] = 32; continue; }
-        for (int j = 0; j < 32; j++) vram[next * 32 + j] = src[j];
-        map[tile] = next++;
+        int slot = tile >= UI_FIXED_FIRST_TILE ? tile : (next ? *next : 32);
+        if (!nonempty || slot >= (tile >= UI_FIXED_FIRST_TILE ? 768 : UI_FIXED_FIRST_TILE)) {
+            map[tile] = 32;
+            continue;
+        }
+        /* All VRAM writes use halfwords; DS VRAM does not support byte stores. */
+        for (int j = 0; j < 32; j++) vram[slot * 32 + j] = src[j];
+        map[tile] = slot;
+        if (tile < UI_FIXED_FIRST_TILE) (*next)++;
     }
+}
+
+static void upload_tiles(void) {
+    u16 *vram = bgGetGfxPtr(sBg);
+    int next = 33;
+    for (int i = 0; i < 32; i++) vram[32 * 32 + i] = 0;
+    upload_tile_range(0, UI_FIXED_FIRST_TILE, &next);
+    upload_tile_range(UI_FIXED_FIRST_TILE, 768, NULL);
 }
 
 void nds_bottom_ui_init(void) {
@@ -255,6 +276,7 @@ static void image(int x, int y, const void *address, int sw, int sh, int w, int 
     int columns[w];
     for (int dx = 0; dx < w; dx++) columns[dx] = dx * sw / w;
     for (int dy = 0; dy < h; dy++) {
+        if (y + dy < sClipY) continue;
         const u16 *row = texture + (dy * sh / h) * sw;
         for (int dx = 0; dx < w; dx++) {
             unsigned c = row[columns[dx]];
@@ -421,6 +443,28 @@ void nds_bottom_ui_present(void) {
     if (sPreviousValid && memcmp(&state, &sPrevious, sizeof(state)) == 0) {
         sText = NULL;
         return;
+    }
+    if (sPreviousValid && !sText && !sPrevious.text) {
+        /* The race/slide timer and the FPS counter change often and live
+         * in the fixed bottom rows: redraw only those rows. */
+        struct BottomUiState a = state, b = sPrevious;
+        a.timer = b.timer = 0;
+        a.fps = b.fps = 0;
+        if (memcmp(&a, &b, sizeof(a)) == 0) {
+            sPrevious = state;
+            memset(sPixels + UI_FIXED_FIRST_TILE * 32, 0,
+                   (768 - UI_FIXED_FIRST_TILE) * 32 * sizeof(u16));
+            sClipY = UI_FIXED_FIRST_Y;
+            hud();
+            if (gNdsShowFps) {
+                char fpsText[16];
+                snprintf(fpsText, sizeof(fpsText), "FPS %u", (unsigned int)gNdsFps);
+                ascii(194, 178, fpsText, 8, 12);
+            }
+            sClipY = 0;
+            upload_tile_range(UI_FIXED_FIRST_TILE, 768, NULL);
+            return;
+        }
     }
     sPrevious = state;
     sPreviousValid = 1;
