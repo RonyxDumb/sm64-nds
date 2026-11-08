@@ -1086,11 +1086,13 @@ $(ARM7): $(ARM7_O_FILES)
 	@$(PRINT) "$(GREEN)Linking ARM7 binary:  $(BLUE)$@ $(NO_COL)\n"
 	$(V)$(LD) -L $(BUILD_DIR) -o $@ $(ARM7_O_FILES) $(ARM7_LDFLAGS)
 
-# The single-precision soft-float helpers (add/sub, mul/div, compare,
-# float->int) are called thousands of times per frame from all game code.
+# The soft-float helpers (single precision add/sub, mul/div, compare,
+# float->int, and the double ops that object physics still uses through
+# double constants) are called thousands of times per frame from all game code.
 # ds_arm9.ld places the .text of any object named *.itcm* in ITCM, so link
 # private copies of those libgcc members under such a name.
-NDS_SOFTFLOAT_MEMBERS := _arm_addsubsf3.o _arm_muldivsf3.o _arm_cmpsf2.o _arm_fixsfsi.o
+NDS_SOFTFLOAT_MEMBERS := _arm_addsubsf3.o _arm_muldivsf3.o _arm_cmpsf2.o _arm_fixsfsi.o \
+                         _arm_addsubdf3.o _arm_muldivdf3.o _arm_truncdfsf2.o _arm_fixdfsi.o
 NDS_SOFTFLOAT_ITCM := $(BUILD_DIR)/nds_softfloat.itcm.o
 NDS_LIBGCC_THUMB = $(shell $(CC) $(TARGET_CFLAGS) -mthumb -mthumb-interwork -print-libgcc-file-name)
 $(NDS_SOFTFLOAT_ITCM):

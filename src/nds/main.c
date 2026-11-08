@@ -232,7 +232,7 @@ static bool nds_classify_note_pause_mute(const struct Note *note, u8 *outMute) {
  * staccare parentLayer. La classificazione resta valida anche se durante la
  * pausa la Note perde il proprietario logico.
  */
-static void nds_update_note_mute_flags(void) {
+ITCM_CODE static void nds_update_note_mute_flags(void) {
     int i;
 
     if (gNotes == NULL) {

@@ -8,6 +8,13 @@
 #include "surface_collision.h"
 #include "surface_load.h"
 
+#if defined(TARGET_NDS) && defined(ARM9)
+/* Floor queries run many times per frame (Mario, objects, shadows). */
+#define NDS_ITCM_CODE __attribute__((section(".itcm"), target("arm")))
+#else
+#define NDS_ITCM_CODE
+#endif
+
 static s32 find_wall_collisions_from_list(struct SurfaceNode *surfaceNode,
                                           struct WallCollisionData *data) {
     register struct Surface *surf;
@@ -318,7 +325,7 @@ f32 find_floor_height_and_data(f32 xPos, f32 yPos, f32 zPos, struct FloorGeometr
     return floorHeight;
 }
 
-static struct Surface *find_floor_from_list(struct SurfaceNode *surfaceNode, s32 x, s32 y, s32 z, f32 *pheight) {
+NDS_ITCM_CODE static struct Surface *find_floor_from_list(struct SurfaceNode *surfaceNode, s32 x, s32 y, s32 z, f32 *pheight) {
     register struct Surface *surf;
     register s32 x1, z1, x2, z2, x3, z3;
     f32 nx, ny, nz;
@@ -410,7 +417,7 @@ f32 unused_find_dynamic_floor(f32 xPos, f32 yPos, f32 zPos, struct Surface **pfl
     return floorHeight;
 }
 
-f32 find_floor(f32 xPos, f32 yPos, f32 zPos, struct Surface **pfloor) {
+NDS_ITCM_CODE f32 find_floor(f32 xPos, f32 yPos, f32 zPos, struct Surface **pfloor) {
     s16 cellZ, cellX;
 
     struct Surface *floor, *dynamicFloor;

@@ -1105,7 +1105,7 @@ NDS_ITCM_CODE static f32 get_sound_volume(u8 bank, u8 soundIndex, f32 volumeRang
     return volumeRange * intensity * intensity + 1.0f - volumeRange;
 }
 
-NDS_ITCM_CODE static f32 get_sound_freq_scale(u8 bank, u8 item) {
+static f32 get_sound_freq_scale(u8 bank, u8 item) {
     f32 amount;
 
     if (!(sSoundBanks[bank][item].soundBits & SOUND_CONSTANT_FREQUENCY)) {
@@ -1120,7 +1120,7 @@ NDS_ITCM_CODE static f32 get_sound_freq_scale(u8 bank, u8 item) {
     return amount / US_FLOAT(15.0) + US_FLOAT(1.0);
 }
 
-NDS_ITCM_CODE static u8 get_sound_reverb(UNUSED u8 bank, UNUSED u8 soundIndex, u8 channelIndex) {
+static u8 get_sound_reverb(UNUSED u8 bank, UNUSED u8 soundIndex, u8 channelIndex) {
     u8 area;
     u8 level;
     u8 reverb;
@@ -1820,7 +1820,7 @@ void seq_player_unlower_volume(u8 player, u16 fadeDuration) {
     }
 }
 
-NDS_ITCM_CODE static u8 begin_background_music_fade(u16 fadeDuration) {
+static u8 begin_background_music_fade(u16 fadeDuration) {
     u8 targetVolume = 0xff;
 
     if (sCurrentBackgroundMusicSeqId == SEQUENCE_NONE

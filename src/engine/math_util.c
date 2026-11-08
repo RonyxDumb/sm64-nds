@@ -318,7 +318,7 @@ NDS_ITCM_CODE void mtxf_billboard(Mat4 dest, Mat4 mtx, Vec3f position, s16 angle
     dest[3][3] = 1;
 }
 
-NDS_ITCM_CODE void mtxf_align_terrain_normal(Mat4 dest, Vec3f upDir, Vec3f pos, s16 yaw) {
+void mtxf_align_terrain_normal(Mat4 dest, Vec3f upDir, Vec3f pos, s16 yaw) {
     Vec3f lateralDir;
     Vec3f leftDir;
     Vec3f forwardDir;
@@ -353,7 +353,7 @@ NDS_ITCM_CODE void mtxf_align_terrain_normal(Mat4 dest, Vec3f upDir, Vec3f pos, 
     dest[3][3] = 1.0f;
 }
 
-NDS_ITCM_CODE void mtxf_align_terrain_triangle(Mat4 mtx, Vec3f pos, s16 yaw, f32 radius) {
+void mtxf_align_terrain_triangle(Mat4 mtx, Vec3f pos, s16 yaw, f32 radius) {
     struct Surface *sp74;
     Vec3f point0;
     Vec3f point1;
@@ -419,7 +419,7 @@ NDS_ITCM_CODE void mtxf_align_terrain_triangle(Mat4 mtx, Vec3f pos, s16 yaw, f32
     mtx[3][3] = 1;
 }
 
-NDS_ITCM_CODE void mtxf_mul(Mat4 dest, Mat4 a, Mat4 b) {
+void mtxf_mul(Mat4 dest, Mat4 a, Mat4 b) {
     Mat4 temp;
     register f32 entry0;
     register f32 entry1;
@@ -462,7 +462,7 @@ NDS_ITCM_CODE void mtxf_mul(Mat4 dest, Mat4 a, Mat4 b) {
 /* Exact IEEE-754 round-to-nearest conversion of signed 16.16 to float.
  * Scaling an int32 float by 2^-16 is exact; construct that result directly
  * instead of calling both software int-to-float and float multiplication. */
-NDS_ARM_CODE __attribute__((noinline)) static f32 nds_fixed16_to_float(s32 value) {
+NDS_ITCM_CODE NDS_ARM_CODE __attribute__((noinline)) static f32 nds_fixed16_to_float(s32 value) {
     if (!value) return 0.0f;
     u32 sign = value < 0 ? 0x80000000u : 0;
     u32 magnitude = value < 0 ? 0u - (u32)value : (u32)value;
@@ -885,7 +885,7 @@ static u16 atan2_lookup(f32 y, f32 x) {
     return ret;
 }
 
-s16 atan2s(f32 y, f32 x) {
+NDS_ITCM_CODE s16 atan2s(f32 y, f32 x) {
     u16 ret;
 
     if (x >= 0) {
