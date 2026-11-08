@@ -337,10 +337,24 @@ void render_hud_camera_status(void) {
 void render_hud(void) {
     s16 hudDisplayFlags = gHudDisplay.flags;
 #ifdef NDS_BOTTOM_UI
+    /* The sub engine draws the compact counters. Only the power meter and
+     * cannon reticle belong to the 3D (upper) screen. */
     nds_bottom_ui_camera(sCameraHUDStatus);
-    if (hudDisplayFlags && gCurrentArea != NULL
-        && gCurrentArea->camera->mode == CAMERA_MODE_INSIDE_CANNON) {
+    if (hudDisplayFlags == HUD_DISPLAY_NONE) {
+        sPowerMeterHUD.animation = POWER_METER_HIDDEN;
+        sPowerMeterStoredHealth = 8;
+        sPowerMeterVisibleTimer = 0;
+        return;
+    }
+    if (hudDisplayFlags & HUD_DISPLAY_FLAG_CAMERA_AND_POWER) {
         create_dl_ortho_matrix();
+        render_hud_power_meter();
+    }
+    if (gCurrentArea != NULL && gCurrentArea->camera != NULL
+        && gCurrentArea->camera->mode == CAMERA_MODE_INSIDE_CANNON) {
+        if (!(hudDisplayFlags & HUD_DISPLAY_FLAG_CAMERA_AND_POWER)) {
+            create_dl_ortho_matrix();
+        }
         render_hud_cannon_reticle();
     }
     return;
