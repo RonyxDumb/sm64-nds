@@ -145,6 +145,60 @@ Repository upstream:
 - https://github.com/TobiasFriedly/sm64-nds
 
 Un ringraziamento a tutti i contributori della community di reverse engineering, homebrew e decompilazione di Super Mario 64.
+## Fluidità e prestazioni
+
+Il gioco simula SM64 a 30 Hz come l'originale: un fotogramma ogni due VBlank
+del DS. Ottimizzazioni principali di questa versione:
+
+- **pacing a scadenza fissa**: ogni fotogramma ha una scadenza ogni 2 VBlank.
+  Un fotogramma in ritardo viene recuperato dai successivi (fino a 6 VBlank);
+  con un intero VBlank di ritardo il fotogramma seguente aggiorna gioco e scena
+  ma salta il lavoro della GPU (mai due di fila). Così i picchi isolati non
+  rallentano più il gioco. Il contatore FPS conta i fotogrammi mostrati;
+- **routine float software in ITCM**: le operazioni float/double di libgcc,
+  usate migliaia di volte per fotogramma da tutta la logica, girano dalla
+  memoria a ciclo singolo invece di mancare la cache della RAM principale;
+  stessa sorte per `find_floor`, `atan2s`, l'elaborazione delle note audio a
+  240 Hz e altre funzioni calde;
+- **oggetti fuori inquadratura**: per il test di visibilità basta la posizione
+  in spazio camera; la matrice completa (rotazione, scala, esportazione float)
+  viene costruita solo per gli oggetti visibili, con valori identici;
+- **ombre**: calcoli trigonometrici per ombra invece che per vertice, matrice
+  semplificata, e cache delle ombre degli oggetti fermi (ricalcolate almeno
+  ogni 4 fotogrammi per seguire acqua e piattaforme);
+- **illuminazione dei vertici** con stato delle luci in registri e matrice
+  direzionale tenuta dalla CPU (nessuna attesa della GPU via `glGetFixed`);
+- **HUD inferiore**: quando cambiano solo cronometro o FPS si ridisegnano
+  soltanto le ultime righe di tile.
+
+Misure con l'emulatore melonDS sulle demo originali (fotogrammi stazionari,
+SD con cluster da 32 KB), prima → dopo:
+
+| Livello | Velocità di gioco | FPS mostrati | Lavoro CPU per fotogramma |
+|---|---|---|---|
+| Whomp's Fortress | 96.1% → 100% | 28.8 → 29.7 | 32.2 → 25.6 ms |
+| Cool, Cool Mountain | 96.5% → 100% | 28.9 → 29.5 | 32.3 → 26.8 ms |
+| Big Boo's Haunt | 97.5% → 100% | 29.2 → 29.7 | 28.0 → 24.2 ms |
+| Jolly Roger Bay | 97.2% → 100% | 29.2 → 29.9 | 32.7 → 28.0 ms |
+| Hazy Maze Cave | 96.7% → 100% | 29.0 → 29.4 | 30.4 → 25.3 ms |
+| Scivolo della principessa | 92.7% → 100% | 27.8 → 29.2 | 29.8 → 22.1 ms |
+
+La schermata con la testa di Mario (motore Goddard) resta la parte più
+pesante (circa 17 FPS). L'hardware reale non è stato ancora provato: i tempi
+assoluti possono differire da melonDS.
+
+`NDS_THUMB=1` compila la logica di gioco in Thumb (codice più compatto,
+meno ricariche della cache dalla RAM a 16 bit); melonDS non simula quel
+vantaggio e la misura più lenta, quindi è disattivata finché non viene
+provata su hardware.
+
+### Benchmark ripetibile
+
+`make VERSION=us COMPILER=gcc NDS_BENCH=1` avvia le demo originali dopo 20
+fotogrammi sulla schermata "PRESS START" invece di 800: premendo START una
+volta si ottiene un ciclo continuo di gameplay (Bowser, WF, CCM, BBH, JRB, HMC,
+scivolo) utile per confrontare le build. Premere SELECT per esportare il CSV.
+
 ## Verifica delle prestazioni
 
 Sul branch `bottom-screen-ui`, premere e rilasciare SELECT durante il gioco
@@ -157,6 +211,12 @@ I tempi sono inclusivi: gli interrupt audio possono sovrapporsi alle altre fasi,
 quindi non sommare le colonne delle fasi. I test host si eseguono con
 `python3 tests/nds_perf_regression.py` e richiedono Python 3 e un compilatore C.
 Confermano le invarianti degli helper modificati; non misurano gli FPS del DS.
+
+Il profilo versione 3 esclude dalle righe per livello/area i fotogrammi con
+caricamenti, attribuisce all'intro i fotogrammi della testa di Mario e aggiunge
+le colonne `vblanks` e `presented`: velocità di gioco = `2 * frames / vblanks`,
+FPS mostrati = `presented / (vblanks / 60)`. Include anche un istogramma dei
+tempi per fotogramma e la ripartizione per fase dei fotogrammi oltre 34 ms.
 
 Il profilo versione 2 separa comandi di livello, costruzione della scena,
 oggetti, collisioni tra oggetti, camera, lettura dei segmenti e sottofasi audio.

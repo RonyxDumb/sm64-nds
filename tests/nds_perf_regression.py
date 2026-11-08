@@ -243,7 +243,12 @@ run('Per-area phase timing and CSV export', r'''
 #include <assert.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <stdbool.h>
 static unsigned TIMER1_CR,TIMER2_CR,TIMER1_DATA,TIMER2_DATA;
+static unsigned testVblanks;
+volatile int gNdsGoddardRendered;
+unsigned nds_renderer_vblank_count(void){return testVblanks+=2;}
+bool nds_renderer_last_frame_presented(void){return true;}
 #define TIMER_ENABLE 1
 #define TIMER_CASCADE 2
 #define TIMER_DIV_64 4
@@ -276,7 +281,7 @@ int main(void){
  nds_perf_request_dump();clock_set(116);nds_perf_finish_frame(16);
  assert(!sPaused&&exportFD>=0);
  FILE*f=fdopen(exportFD,"r");assert(f);rewind(f);char buf[32768];size_t n=fread(buf,1,sizeof(buf)-1,f);buf[n]=0;fclose(f);
- assert(strstr(buf,"# Profile version,2\n"));
+ assert(strstr(buf,"# Profile version,3\n"));
  assert(strstr(buf,"level,area,phase,total_ticks\n"));
  assert(strstr(buf,"24,1,actors_inclusive,20\n"));
  assert(strstr(buf,"24,2,scene_build_inclusive,32\n"));
@@ -291,6 +296,7 @@ run('Fixed 16.16 float conversion bit equivalence', r'''
 #include <limits.h>
 typedef int32_t s32;typedef uint32_t u32;typedef float f32;
 #define NDS_ARM_CODE
+#define NDS_ITCM_CODE
 ''' + function('src/engine/math_util.c', 'nds_fixed16_to_float') + r'''
 static void check(u32 word){
  s32 n;memcpy(&n,&word,4);
@@ -383,6 +389,34 @@ int main(void){
 }
 ''')
 
+run('Float to 16.16 truncation equivalence', r'''
+#include <stdint.h>
+#include <string.h>
+#include <assert.h>
+#include <stdlib.h>
+typedef int32_t s32;typedef uint32_t u32;typedef float f32;
+#define NDS_ARM_CODE
+#define NDS_ITCM_CODE
+''' + function('src/engine/math_util.c', 'nds_float_to_fixed16') + r'''
+int main(void){
+ srand(7);
+ for(long i=0;i<4000000;i++){
+  u32 bits=((u32)rand()<<16)^(u32)rand();f32 f;memcpy(&f,&bits,4);
+  if(f!=f)continue;
+  double d=(double)f*65536.0;
+  if(d>=2147483648.0||d<-2147483648.0)continue;
+  assert(nds_float_to_fixed16(f)==(s32)(f*65536.0f));
+ }
+ for(long i=0;i<2000000;i++){
+  f32 f=((rand()/(f32)RAND_MAX)-0.5f)*65000.0f;
+  assert(nds_float_to_fixed16(f)==(s32)(f*65536.0f));
+ }
+ assert(nds_float_to_fixed16(1e20f)==0x7fffffff&&nds_float_to_fixed16(-1e20f)==(s32)0x80000000);
+ assert(nds_float_to_fixed16(-32768.0f)==(s32)0x80000000);
+ return 0;
+}
+''')
+
 run('Deferred matrix float export and scaling', r'''
 #include <stdint.h>
 #include <assert.h>
@@ -395,7 +429,7 @@ typedef struct {s32 m[4][4];} Mtx;
 #define NDS_ITCM_CODE
 #define FIXED_MUL16(x,y) ((s32)((((s64)(x)*(y))+0x8000)>>16))
 ''' + '\n'.join(function('src/engine/math_util.c', n) for n in
-    ['nds_fixed16_to_float', 'mtx_get_fixed', 'mtxf_mul_fixed_raw', 'mtxf_scale_fixed']) + r'''
+    ['nds_fixed16_to_float', 'nds_float_to_fixed16', 'mtx_get_fixed', 'mtxf_mul_fixed_raw', 'mtxf_scale_fixed']) + r'''
 int main(void){
  for(int trial=0;trial<20000;trial++){
   s32 input[4][4],b[4][4],actual[4][4],expected[4][4];Mat4 floats,mirror;Mtx packed;

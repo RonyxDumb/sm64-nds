@@ -728,9 +728,9 @@ NDS_ITCM_CODE void mtxf_mul_fixed_raw(s32 destFixed[4][4], Mat4 floatDest, s32 a
     }
 }
 
-/* Translation row of mtxf_mul_fixed_raw(rotate_zxy_and_translate_fixed(pos),
+/* Translation row of mtxf_mul_fixed_raw of (rotate_zxy_and_translate_fixed(pos),
  * parent), i.e. an object's position in camera space, computed with the very
- * same fixed-point arithmetic and exported exactly like mtxf_scale_fixed()
+ * same fixed-point arithmetic and exported exactly as mtxf_scale_fixed
  * exports row 3. Lets off-screen objects skip the rest of their matrix. */
 NDS_ITCM_CODE void mtxf_object_camera_position(Vec3f outFloat, s32 outFixed[3], Vec3f pos, const Mtx *bPacked) {
     s32 t[3], j;
