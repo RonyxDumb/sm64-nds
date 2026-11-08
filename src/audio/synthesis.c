@@ -1397,6 +1397,9 @@ void note_init_volume(struct Note *note) {
     note->frequency = 0.0f;
 }
 
+#if defined(TARGET_NDS) && defined(ARM9)
+__attribute__((section(".itcm"), target("arm")))
+#endif
 void note_set_vel_pan_reverb(struct Note *note, f32 velocity, f32 pan, u8 reverbVol) {
     s32 panIndex;
     f32 volLeft;

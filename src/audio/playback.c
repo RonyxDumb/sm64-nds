@@ -340,6 +340,10 @@ void note_disable2(struct Note *note) {
 }
 #endif
 
+#if defined(TARGET_NDS) && defined(ARM9)
+/* Runs on every 240 Hz audio tick inside the audio interrupt. */
+__attribute__((section(".itcm"), target("arm"), noinline))
+#endif
 void process_notes(void) {
     f32 scale;
 #if !defined(VERSION_SH) && !defined(VERSION_CN)

@@ -209,7 +209,8 @@ static void geo_process_master_list(struct GraphNodeMasterList *node) {
     }
 }
 
-static void geo_process_ortho_projection(struct GraphNodeOrthoProjection *node) {
+/* Once per frame or rarer: keep it out of the ITCM traversal body. */
+NDS_NOINLINE static void geo_process_ortho_projection(struct GraphNodeOrthoProjection *node) {
     if (node->node.children != NULL) {
         Mtx *mtx = alloc_display_list(sizeof(*mtx));
         f32 left = (gCurGraphNodeRoot->x - gCurGraphNodeRoot->width) / 2.0f * node->scale;
@@ -225,7 +226,8 @@ static void geo_process_ortho_projection(struct GraphNodeOrthoProjection *node) 
     }
 }
 
-static void geo_process_perspective(struct GraphNodePerspective *node) {
+/* Once per frame or rarer: keep it out of the ITCM traversal body. */
+NDS_NOINLINE static void geo_process_perspective(struct GraphNodePerspective *node) {
     if (node->fnNode.func != NULL) {
         node->fnNode.func(GEO_CONTEXT_RENDER, &node->fnNode.node, gMatStack[gMatStackIndex]);
     }
@@ -282,7 +284,8 @@ static void geo_process_switch(struct GraphNodeSwitchCase *node) {
     }
 }
 
-static void geo_process_camera(struct GraphNodeCamera *node) {
+/* Once per frame or rarer: keep it out of the ITCM traversal body. */
+NDS_NOINLINE static void geo_process_camera(struct GraphNodeCamera *node) {
     Mat4 cameraTransform;
     Mtx *rollMtx = alloc_display_list(sizeof(*rollMtx));
     Mtx *mtx = alloc_display_list(sizeof(*mtx));
@@ -1002,7 +1005,8 @@ static void geo_process_object(struct Object *node) {
     }
 }
 
-static void geo_process_object_parent(struct GraphNodeObjectParent *node) {
+/* Once per frame or rarer: keep it out of the ITCM traversal body. */
+NDS_NOINLINE static void geo_process_object_parent(struct GraphNodeObjectParent *node) {
     if (node->sharedChild != NULL) {
         node->sharedChild->parent = (struct GraphNode *) node;
         geo_process_node_and_siblings(node->sharedChild);
@@ -1013,7 +1017,7 @@ static void geo_process_object_parent(struct GraphNodeObjectParent *node) {
     }
 }
 
-void geo_process_held_object(struct GraphNodeHeldObject *node) {
+NDS_NOINLINE void geo_process_held_object(struct GraphNodeHeldObject *node) {
     Mat4 mat;
     Vec3f translation;
     Mtx *mtx = alloc_display_list(sizeof(*mtx));

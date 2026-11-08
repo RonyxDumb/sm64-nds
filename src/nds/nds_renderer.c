@@ -501,7 +501,18 @@ ITCM_CODE static void g_vtx(Gwords *words) {
     const uint8_t index = ((words->w0 >>  0) & 0xFF) >> 1;
     const Vtx *vertices = (const Vtx*)segmented_to_virtual((const void*)words->w1);
 
-    memcpy(&vertex_buffer[index - count], vertices, count * sizeof(Vtx));
+    if (!((uintptr_t)vertices & 3)) {
+        /* Inline word copy: the library memcpy is Thumb code in main RAM
+         * and this runs for every vertex group. */
+        uint32_t *dst = (uint32_t *)&vertex_buffer[index - count];
+        const uint32_t *src = (const uint32_t *)vertices;
+        for (int i = 0; i < count; i++, dst += 4, src += 4) {
+            const uint32_t a = src[0], b = src[1], c = src[2], d = src[3];
+            dst[0] = a; dst[1] = b; dst[2] = c; dst[3] = d;
+        }
+    } else {
+        memcpy(&vertex_buffer[index - count], vertices, count * sizeof(Vtx));
+    }
 
     if (geometry_mode & G_LIGHTING) {
 
