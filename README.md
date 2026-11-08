@@ -170,9 +170,11 @@ del DS. Ottimizzazioni principali di questa versione:
   direzionale tenuta dalla CPU (nessuna attesa della GPU via `glGetFixed`);
 - **HUD inferiore**: quando cambiano solo cronometro o FPS si ridisegnano
   soltanto le ultime righe di tile.
-- **minimappa inferiore**: generata a runtime dalle collisioni dei pavimenti
-  dell'area (nessun asset in ROM, ~6 KB di RAM), mostra il piano su cui si
-  trova Mario; il segnalino riscrive solo i tile che attraversa.
+- **minimappa inferiore**: durante la build `tools/nds_minimap_render.py`
+  disegna dall'alto, con le texture, ogni area di ogni livello (128x128,
+  16 KB ciascuna in NitroFS, ~0,7 MB in tutto). In gioco l'immagine dell'area
+  corrente viene copiata in VRAM su un layer separato (BG1), senza copie in
+  RAM; la freccia di Mario riscrive solo i suoi 9 tile sul layer dell'HUD.
 
 Misure con l'emulatore melonDS sulle demo originali (fotogrammi stazionari,
 SD con cluster da 32 KB), prima → dopo:

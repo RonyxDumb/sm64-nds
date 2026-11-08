@@ -17,7 +17,8 @@ extern u8 gDialogCharWidths[256];
 #include "game/segment2.h"
 
 /* H + I provide 48 KiB of sub BG VRAM. The map occupies the first
- * 2 KiB; pack only nonempty 8bpp tiles after it (tile 32 is blank).
+ * 2 KiB and the minimap's BG1 map the next 2 KiB; pack only nonempty
+ * 8bpp tiles after them (tile 64 is blank).
  * C/D remain reserved for ARM7 audio. */
 static u16 sPixels[256 * 192 / 2] __attribute__((aligned(32)));
 static int sBg;
@@ -102,9 +103,9 @@ static void upload_tile_range(int first, int last, int *next) {
         const u16 *src = sPixels + tile * 32;
         int nonempty = 0;
         for (int j = 0; j < 32; j++) nonempty |= src[j];
-        int slot = tile >= UI_FIXED_FIRST_TILE ? tile : (next ? *next : 32);
+        int slot = tile >= UI_FIXED_FIRST_TILE ? tile : (next ? *next : NDS_UI_BLANK_TILE);
         if (!nonempty || slot >= (tile >= UI_FIXED_FIRST_TILE ? 768 : sPackLimit)) {
-            map[tile] = 32;
+            map[tile] = NDS_UI_BLANK_TILE;
             continue;
         }
         /* All VRAM writes use halfwords; DS VRAM does not support byte stores. */
@@ -116,11 +117,11 @@ static void upload_tile_range(int first, int last, int *next) {
 
 static void upload_tiles(void) {
     u16 *vram = bgGetGfxPtr(sBg);
-    int next = 33;
-    for (int i = 0; i < 32; i++) vram[32 * 32 + i] = 0;
+    int next = NDS_UI_BLANK_TILE + 1;
+    for (int i = 0; i < 32; i++) vram[NDS_UI_BLANK_TILE * 32 + i] = 0;
     upload_tile_range(0, UI_FIXED_FIRST_TILE, &next);
     upload_tile_range(UI_FIXED_FIRST_TILE, 768, NULL);
-    if (next > NDS_MINIMAP_SLOT) nds_minimap_invalidate();
+    if (next > NDS_MINIMAP_MARKER) nds_minimap_invalidate();
     nds_minimap_map_dirty();
 }
 
@@ -131,7 +132,8 @@ void nds_bottom_ui_init(void) {
     vramSetBankH(VRAM_H_SUB_BG);
     vramSetBankI(VRAM_I_SUB_BG_0x06208000);
     sBg = bgInitSub(0, BgType_Text8bpp, BgSize_T_256x256, 0, 0);
-    for (int i = 0; i < 1024; i++) bgGetMapPtr(sBg)[i] = 32;
+    for (int i = 0; i < 1024; i++) bgGetMapPtr(sBg)[i] = NDS_UI_BLANK_TILE;
+    bgSetPriority(sBg, 0);
     /* Keep the proven dialog's seven gray levels. A 6x6x6 RGB cube
      * supplies the original HUD artwork with 216 additional colors. */
     for (int i = 0; i < 8; i++) BG_PALETTE_SUB[i] = RGB15(i * 31 / 7, i * 31 / 7, i * 31 / 7);
@@ -407,6 +409,7 @@ static struct BottomUiState sPrevious;
 void nds_bottom_ui_present(void) {
     struct BottomUiState state;
     if (nds_title_active()) {
+        nds_minimap_update(0);
         title_present();
         sTitleWasOpen = 1;
         sText = NULL;
@@ -419,7 +422,7 @@ void nds_bottom_ui_present(void) {
     memset(&state, 0, sizeof(state));
     /* The minimap shares the area below the HUD with dialog text. */
     state.minimap = nds_minimap_update(gHudDisplay.flags && !sText);
-    sPackLimit = state.minimap ? NDS_MINIMAP_SLOT : UI_FIXED_FIRST_TILE;
+    sPackLimit = state.minimap ? NDS_MINIMAP_MARKER : UI_FIXED_FIRST_TILE;
     state.text = sText;
     state.flags = gHudDisplay.flags;
     state.fpsEnabled = gNdsShowFps;

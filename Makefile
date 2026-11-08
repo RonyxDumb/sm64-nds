@@ -1076,7 +1076,18 @@ $(NITROFS_DIR)/data/bin/%.bin: $(BUILD_DIR)/bin/%.bin
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
+# Top-down minimaps of every area, pre-rendered from the level geometry
+# (tools/nds_minimap_render.py). One stamp per level marks its maps done.
+NDS_MINIMAP_LEVELS := $(LEVEL_DIRS:%/=%)
+NDS_MINIMAP_STAMPS := $(NDS_MINIMAP_LEVELS:%=$(BUILD_DIR)/minimap/%.stamp)
+$(BUILD_DIR)/minimap/%.stamp: levels/%/script.c tools/nds_minimap_render.py
+	$(call print,Rendering minimaps:,levels/$*,$(NITROFS_DIR)/data/minimap)
+	@mkdir -p $(dir $@)
+	$(V)$(PYTHON) tools/nds_minimap_render.py levels/$* $(NITROFS_DIR)/data/minimap
+	@touch $@
+
 NDS_NITROFS_DATA := \
+    $(NDS_MINIMAP_STAMPS) \
     $(ACTOR_GROUPS:%=$(NITROFS_DIR)/data/actors/%.bin) \
     $(LEVEL_FILES:%=$(NITROFS_DIR)/data/levels/%.bin) \
     $(NDS_BIN_SEGMENTS:%=$(NITROFS_DIR)/data/bin/%.bin) \
