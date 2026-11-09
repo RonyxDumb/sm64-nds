@@ -8,23 +8,6 @@ L'obiettivo di questa versione è rendere il gioco il più possibile adatto all'
 
 ---
 
-## Modifiche principali
-
-Questa versione include varie modifiche rispetto al port originale:
-
-- menu iniziale con logo 3D e cielo sullo schermo superiore;
-- `START GAME` e `OPTIONS` sul touchscreen, con transizioni animate;
-- opzioni audio e contatore FPS;
-- avvio classico con logo, testa di Mario Goddard animata e File Select originale;
-- tema Wing Cap nel menu iniziale, al 75% del tempo e due semitoni più basso;
-- correzione del loop audio durante la pausa;
-- ricerca più robusta del percorso della ROM;
-- supporto migliorato per flashcart;
-- banner Nintendo DS personalizzato;
-- icona ROM personalizzata;
-
----
-
 ## Requisiti
 
 Per compilare il progetto servono:
